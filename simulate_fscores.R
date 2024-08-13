@@ -1,8 +1,5 @@
 library(pacman)
 p_load(dplyr, magrittr, ggplot2, psych, data.table, tidyr, janitor, hablar, mirt)
-source("src/simulate_fscores.R")
-source("src/estimate_models.R")
-source("src/run_simulations.R")
 
 # Setup item parameters and factors
 
