@@ -1,5 +1,5 @@
 library(pacman)
-p_load(dplyr, magrittr, ggplot2, psych, data.table, tidyr, janitor, hablar, mirt)
+p_load(dplyr, magrittr, ggplot2, psych, data.table, tidyr, janitor, hablar, mirt, faux)
 
 # Setup item parameters and factors
 
