@@ -8,7 +8,7 @@ load(file.choose())
 original_data <- `HCAP_harmonized_data_PsyMCA-v4`
 
 hcap_haalsi_memory <- original_data %>%
-  select(id, study, age:educattain_resp,
+  select(id, study, age:educattain_resp,# upper secondary as the cutoff
          fmem_bayes3, # Factor score for mem (Bayes with 3 posterior draws)
          fmem, # Factor score for mem
          fmem_se, # SE of Factor score for mem
@@ -39,10 +39,12 @@ hcap_haalsi_memory <- original_data %>%
          vision_near,
          fqmdactx,
          fqvgactx) %>%
-  mutate(bmi = mweight/mheight^2,
+  mutate(less_edu = ifelse(educattain_resp >= 3, 0, 1), # using upper secondary as threshold
+         bmi = mweight/mheight^2, 
+         obese = ifelse(bmi >= 30, 1, 0),
          excessive_drink = ifelse(drinksperwk > 12, 1, 0),
          eversmoker = ifelse(smokestat == 3, 0, 1),
-         depression = ifelse(rowSums(across(cesd1:cesd8), na.rm = T) >= 4, 1, 0),
+         depression = ifelse(rowSums(across(cesd1:cesd8), na.rm = T) >= 4, 1, 0), # Pending on NA all cesds
          vision_loss = case_when(
            vision_dis == 5 | vision_near == 5 ~ 1,
            is.na(vision_dis) & is.na(vision_near) ~ NA_real_,
@@ -50,12 +52,9 @@ hcap_haalsi_memory <- original_data %>%
   filter(study %in% c(1, 5))
 
 #---- Risk factors ----
-lancet_vars <- c("educattain_resp", "hearing_aidl", "hyper", "eversmoker",
-                 "bmi", "depression", "t2diab", "excessive_drink", "vision_loss")
-original_data %>% select(cesd1:cesd8) %>%
-  apply(., 2, table, useNA = "ifany")
-
-original_data %>% select(vision_dis, vision_near) %>%
+lancet_vars <- c("less_edu", "hearing_aid1", "hyper", "eversmoker",
+                 "obese", "depression", "t2diab", "excessive_drink", "vision_loss")
+hcap_haalsi_memory %>% select(all_of(lancet_vars)) %>%
   apply(., 2, table, useNA = "ifany")
 
 
