@@ -2,6 +2,9 @@ library(pacman)
 p_load(dplyr, magrittr, ggplot2, psych, data.table, tidyr, janitor, hablar,
        mirt, faux)
 
+# Use the dialog box to open ~/Dropbox/Projects/PsyMCA-2024-Simulation/data/HCAP_harmonized_data_PsyMCA-v4.rdata
+load(file.choose())
+
 original_data <- `HCAP_harmonized_data_PsyMCA-v4`
 
 hcap_haalsi_memory <- original_data %>%
