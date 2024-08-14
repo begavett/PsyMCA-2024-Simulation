@@ -29,7 +29,7 @@ hcap_haalsi_memory <- original_data %>%
          hearing_aid1,
          hearing,
          hyper,
-         currsmoke,
+         smokestat,
          mweight,
          mheight,
          cesd1:cesd8, # Threshold = 4
@@ -39,6 +39,23 @@ hcap_haalsi_memory <- original_data %>%
          vision_near,
          fqmdactx,
          fqvgactx) %>%
-  mutate(bmi = mweight/mheight^2) %>%
+  mutate(bmi = mweight/mheight^2,
+         excessive_drink = ifelse(drinksperwk > 12, 1, 0),
+         eversmoker = ifelse(smokestat == 3, 0, 1),
+         depression = ifelse(rowSums(across(cesd1:cesd8), na.rm = T) >= 4, 1, 0),
+         vision_loss = case_when(
+           vision_dis == 5 | vision_near == 5 ~ 1,
+           is.na(vision_dis) & is.na(vision_near) ~ NA_real_,
+           TRUE ~ 0)) %>%
   filter(study %in% c(1, 5))
+
+#---- Risk factors ----
+lancet_vars <- c("educattain_resp", "hearing_aidl", "hyper", "eversmoker",
+                 "bmi", "depression", "t2diab", "excessive_drink", "vision_loss")
+original_data %>% select(cesd1:cesd8) %>%
+  apply(., 2, table, useNA = "ifany")
+
+original_data %>% select(vision_dis, vision_near) %>%
+  apply(., 2, table, useNA = "ifany")
+
 
