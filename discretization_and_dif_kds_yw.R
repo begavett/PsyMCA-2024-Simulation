@@ -185,9 +185,11 @@ process_data <- function(suffix, iter) {
       test <- recodeOrdinal(sim_data, 
                             varlist_orig = c("lmi", "lmd", "lm_recog", "cerad_cpd"),
                             varlist_tr = c("lmi_ei", "lmd_ei", "lm_recog_ei", "cerad_cpd_ei"),
+                            ncat = 10,
                             nobs = n_obs) %>%
         select(group, ends_with("ei"))
     }
+    
     count_tib <- test %>% 
       filter(group == 2) %>%
       select(ends_with(suffix)) %>%
@@ -195,7 +197,7 @@ process_data <- function(suffix, iter) {
       group_by(name, value) %>%
       dplyr::count()
     
-    if(all(count_tib$n >= 5)){
+    if(all(count_tib$n >= 2)){
       print(n_obs)
       break
     } else if (n_obs == 631){
@@ -206,7 +208,8 @@ process_data <- function(suffix, iter) {
   if (suffix == "ef"){
     sim_data_r <- sim_data %>%
       mutate(across(c(lmi, lmd, lm_recog, cerad_cpd), 
-                    \(x) as.numeric(cut2(x, g = 10, m = n_obs)), .names = "{.col}_ef")) 
+                    \(x) as.numeric(cut2(x, g = 10, m = n_obs)), 
+                    .names = "{.col}_ef")) 
   } else if (suffix == "ei"){
     sim_data_r <- recodeOrdinal(
       sim_data, 
@@ -345,17 +348,17 @@ return(list(sim_data = sim_data, sem_summary = sem_summary, mirt_coef = mirt_coe
             lm_model_hrs = lm_model_hrs, lm_model_haalsi = lm_model_haalsi))
 }
 
-results_ef <- process_data("ef", iter = 2)
-results_ei <- process_data("ei", iter = 2)
-
-# check if the same simulate data is used
-diffdf::diffdf(results_ef$sim_data, results_ei$sim_data)
+# results_ef <- process_data("ef", iter = 1)
+# results_ei <- process_data("ei", iter = 1)
+# 
+# # check if the same simulate data is used
+# diffdf::diffdf(results_ef$sim_data, results_ei$sim_data)
 
 
 results <- list()
-nsims <- 20
+nsims <- 40
 successes <- 0
-tries <- 0
+tries <- 20
 
 while (successes < nsims) {
   
@@ -368,6 +371,8 @@ while (successes < nsims) {
     
     if(!"error" %in% class(results_ei)) {
       successes <- successes + 1
+      results[[paste0("iter_", i, "_ef")]] <- results_ef
+      results[[paste0("iter_", i, "_ei")]] <- results_ei
     }
   }
   cat(paste0("Tries = ", tries, "; Successes = ", successes))
