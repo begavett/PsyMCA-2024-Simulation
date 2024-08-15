@@ -319,6 +319,10 @@ hz_model_fscores <- fscores(hz_model1, full.scores.SE = TRUE, QMC = TRUE) %>%
 hcap_haalsi_memory_fs <- hcap_haalsi_memory %>%
   bind_cols(hz_model_fscores)
 
+sim_data_r_fs <- sim_data_r %>%
+  bind_cols(hz_model_fscores)
+
+
 # Plot and run linear model
 plot <- ggplot(hcap_haalsi_memory_fs, aes(x = fmem, y = F1, colour = cohort)) +
   geom_point() + geom_smooth(method = "lm")
@@ -326,9 +330,19 @@ plot <- ggplot(hcap_haalsi_memory_fs, aes(x = fmem, y = F1, colour = cohort)) +
 lm_model <- lm(F1 ~ depression + hyper, data = hcap_haalsi_memory_fs) %>% 
   summary()
 
+lm_model_hrs <- lm(F1 ~ depression + hyper, data = sim_data_r_fs %>% 
+                     filter(study == "A_HRS")) %>% 
+  summary()
+
+lm_model_haalsi <- lm(F1 ~ depression + hyper, data = sim_data_r_fs %>% 
+                        filter(study == "B_HAALSI")) %>% 
+  summary()
+
+
 return(list(sim_data = sim_data, sem_summary = sem_summary, mirt_coef = mirt_coef, mg_coef = mg_coef, 
             dif_items = dif_items, hz_mg_pars_check = hz_mg_pars_check, 
-            hz_model_coef = hz_model_coef, plot = plot, lm_model = lm_model))
+            hz_model_coef = hz_model_coef, plot = plot, lm_model = lm_model,
+            lm_model_hrs = lm_model_hrs, lm_model_haalsi = lm_model_haalsi))
 }
 
 results_ef <- process_data("ef", iter = 2)
@@ -342,23 +356,21 @@ results <- list()
 nsims <- 20
 successes <- 0
 tries <- 0
+
 while (successes < nsims) {
   
   tries <- tries + 1
   
-  results_ef <- tryCatch(process_data("ef", iter = tries), error = function(e) e, 
-                         finally = print("Error"))
+  results_ef <- tryCatch(process_data("ef", iter = tries), error = function(e) e, finally = print("Error"))
   
   if(!"error" %in% class(results_ef)) {
-    results_ei <- tryCatch(process_data("ei", iter = tries), error = function(e) e, 
-                           finally = print("Error"))
+    results_ei <- tryCatch(process_data("ei", iter = tries), error = function(e) e, finally = print("Error"))
     
     if(!"error" %in% class(results_ei)) {
       successes <- successes + 1
-      results[[paste0("iter_", i, "_ef")]] <- results_ef
-      results[[paste0("iter_", i, "_ei")]] <- results_ei
     }
   }
+  cat(paste0("Tries = ", tries, "; Successes = ", successes))
 }
 
 # # Parallel 
