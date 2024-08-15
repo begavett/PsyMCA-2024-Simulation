@@ -179,13 +179,13 @@ process_data <- function(suffix, iter) {
     if (suffix == "ef"){
       test <- sim_data %>%
         mutate(across(c(lmi, lmd, lm_recog, cerad_cpd),
-                      \(x) as.numeric(cut2(x, g = 10, m = n_obs)), .names = "{.col}_ef")) %>%
+                      \(x) as.numeric(cut2(x, g = 11, m = n_obs)), .names = "{.col}_ef")) %>%
         select(group, ends_with("ef"))
     } else if (suffix == "ei"){
       test <- recodeOrdinal(sim_data,
                             varlist_orig = c("lmi", "lmd", "lm_recog", "cerad_cpd"),
                             varlist_tr = c("lmi_ei", "lmd_ei", "lm_recog_ei", "cerad_cpd_ei"),
-                            ncat = 10,
+                            ncat = 11,
                             nobs = n_obs) %>%
         select(group, ends_with("ei"))
     }
@@ -211,14 +211,14 @@ process_data <- function(suffix, iter) {
   if (suffix == "ef"){
     sim_data_r <- sim_data %>%
       mutate(across(c(lmi, lmd, lm_recog, cerad_cpd), 
-                    \(x) as.numeric(cut2(x, g = 10, m = n_obs)), 
+                    \(x) as.numeric(cut2(x, g = 11, m = n_obs)), 
                     .names = "{.col}_ef")) 
   } else if (suffix == "ei"){
     sim_data_r <- recodeOrdinal(
       sim_data, 
       varlist_orig = c("lmi", "lmd", "lm_recog", "cerad_cpd"),
       varlist_tr = c("lmi_ei", "lmd_ei", "lm_recog_ei", "cerad_cpd_ei"),
-      ncat = 10, nobs = n_obs)
+      ncat = 11, nobs = n_obs)
   }
   
   # Define column names based on the suffix
@@ -274,7 +274,7 @@ process_data <- function(suffix, iter) {
   mg_coef <- coef(fit_mg, simplify = TRUE)
   
   # Perform DIF analysis
-  dif_res <- DIF(fit_mg, which.par = c("a1", paste0("d", 1:9)), 
+  dif_res <- DIF(fit_mg, which.par = c("a1", paste0("d", 1:10)), 
                  scheme = "add_sequential", 
                  technical = list(NCYCLES = 50000))
   dif_items <- rownames(dif_res)
@@ -302,7 +302,7 @@ process_data <- function(suffix, iter) {
   
   # Check item parameters
   hz_mg_pars_check <- hz_mg_pars %>%
-    filter(item %in% item_names, name %in% c("a1", paste0("d", 1:9))) %>%
+    filter(item %in% item_names, name %in% c("a1", paste0("d", 1:10))) %>%
     arrange(item, group, name)
   
   # Fit final multiple group model
@@ -362,8 +362,9 @@ results <- list()
 nsims <- 20
 successes <- 0
 tries <- 0
+max_tries <- 100
 
-while (successes < nsims) {
+while (successes < nsims & tries < max_tries) {
   
   tries <- tries + 1
   
