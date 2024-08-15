@@ -179,13 +179,13 @@ process_data <- function(suffix, iter) {
     if (suffix == "ef"){
       test <- sim_data %>%
         mutate(across(c(lmi, lmd, lm_recog, cerad_cpd), 
-                      \(x) as.numeric(cut2(x, g = 10, m = n_obs)), .names = "{.col}_ef")) %>%
+                      \(x) as.numeric(cut2(x, g = 9, m = n_obs)), .names = "{.col}_ef")) %>%
         select(group, ends_with("ef"))
     } else if (suffix == "ei"){
       test <- recodeOrdinal(sim_data, 
                             varlist_orig = c("lmi", "lmd", "lm_recog", "cerad_cpd"),
                             varlist_tr = c("lmi_ei", "lmd_ei", "lm_recog_ei", "cerad_cpd_ei"),
-                            ncat = 10,
+                            ncat = 9,
                             nobs = n_obs) %>%
         select(group, ends_with("ei"))
     }
