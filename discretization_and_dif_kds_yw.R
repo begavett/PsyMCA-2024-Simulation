@@ -175,200 +175,224 @@ process_data <- function(suffix, iter) {
            cohort = ifelse(group == 1, "HRS", "HAALSI"))
   
   # Discretization
-  if (suffix == "ef"){
-    sim_data_r <- sim_data %>%
-      mutate(across(c(lmi, lmd, lm_recog, cerad_cpd), 
-                    \(x) as.numeric(cut2(x, g = 10, m = 5)), .names = "{.col}_ef"))
-  } else if (suffix == "ei"){
-    for (n_obs in 5:200){
+  for (n_obs in 5:631){
+    if (suffix == "ef"){
+      test <- sim_data %>%
+        mutate(across(c(lmi, lmd, lm_recog, cerad_cpd), 
+                      \(x) as.numeric(cut2(x, g = 10, m = n_obs)), .names = "{.col}_ef")) %>%
+        select(group, ends_with("ef"))
+    } else if (suffix == "ei"){
       test <- recodeOrdinal(sim_data, 
                             varlist_orig = c("lmi", "lmd", "lm_recog", "cerad_cpd"),
                             varlist_tr = c("lmi_ei", "lmd_ei", "lm_recog_ei", "cerad_cpd_ei"),
                             nobs = n_obs) %>%
         select(group, ends_with("ei"))
-      
-      count_tib <- test %>% 
-        filter(group == 2) %>%
-        select(ends_with("ei")) %>%
-        pivot_longer(cols = lmi_ei:cerad_cpd_ei) %>%
-        group_by(name, value) %>%
-        dplyr::count()
-      
-      if(all(count_tib$n >= 5)){
-        print(n_obs)
-        break
-      } else if (n_obs == 200){
-        stop("No solution found")
-      }
     }
+    count_tib <- test %>% 
+      filter(group == 2) %>%
+      select(ends_with(suffix)) %>%
+      pivot_longer(cols = ends_with(suffix)) %>%
+      group_by(name, value) %>%
+      dplyr::count()
     
+    if(all(count_tib$n >= 5)){
+      print(n_obs)
+      break
+    } else if (n_obs == 631){
+      stop("No solution found n obs for bin")
+    }
+  }
+  
+  if (suffix == "ef"){
+    sim_data_r <- sim_data %>%
+      mutate(across(c(lmi, lmd, lm_recog, cerad_cpd), 
+                    \(x) as.numeric(cut2(x, g = 10, m = n_obs)), .names = "{.col}_ef")) 
+  } else if (suffix == "ei"){
     sim_data_r <- recodeOrdinal(
       sim_data, 
       varlist_orig = c("lmi", "lmd", "lm_recog", "cerad_cpd"),
       varlist_tr = c("lmi_ei", "lmd_ei", "lm_recog_ei", "cerad_cpd_ei"),
       ncat = 10, nobs = n_obs)
   }
-  
-  # Define column names based on the suffix
-  item_names <- c(paste0("lmi_", suffix), paste0("lmd_", suffix), 
-                  paste0("lm_recog_", suffix), paste0("cerad_cpd_", suffix))
-  
-  # Define model formula based on the suffix
-  model_formula <- sprintf('
+
+# Define column names based on the suffix
+item_names <- c(paste0("lmi_", suffix), paste0("lmd_", suffix), 
+                paste0("lm_recog_", suffix), paste0("cerad_cpd_", suffix))
+
+# Define model formula based on the suffix
+model_formula <- sprintf('
   mem =~ %s
   
   mem ~ hyper + depression
   ', paste(item_names, collapse = " + "))
-  
-  # Process the data
-  print(paste("Processing suffix:", suffix))
-  
-  # Fit SEM model
-  sem_model <- sem(model_formula, data = sim_data_r, ordered = TRUE, 
-                   estimator = "wlsmv", std.lv = TRUE)
-  sem_summary <- summary(sem_model, fit.measures = TRUE, standardize = TRUE)
-  
-  # Fit MIRT model
-  mirt_model <- mirt(sim_data_r %>% select(ends_with(suffix)), 
-                     model = 1, itemtype = "graded")
-  mirt_coef <- coef(mirt_model, simplify = TRUE)
-  
-  # Randomly select a linking item
-  linking_item_number <- sample(1:4, 1)
-  linking_item <- item_names[linking_item_number]
-  
-  # Fit HRS model
-  fit_hrs <- mirt(sim_data_r %>% filter(cohort == "HRS") %>% select(ends_with(suffix)),
-                  model = 1, itemtype = "graded", SE = TRUE, 
-                  technical = list(NCYCLES = 50000))
-  bank_hrs <- mod2values(fit_hrs)
-  
-  # Update study column
-  sim_data_r <- sim_data_r %>%
-    mutate(study = ifelse(group == 1, "A_HRS", "B_HAALSI"))
-  
-  # Fit HAALSI model
-  fit_haalsi <- mirt(sim_data_r %>% filter(cohort == "HAALSI") %>% select(ends_with(suffix)),
-                     model = 1, itemtype = "graded", SE = TRUE, 
-                     technical = list(NCYCLES = 50000))
-  bank_haalsi <- mod2values(fit_haalsi)
-  
-  # Fit multiple group model
-  fit_mg <- multipleGroup(sim_data_r %>% select(ends_with(suffix)), 
-                          model = 1, itemtype = "graded", 
-                          group = sim_data_r$study, SE = TRUE, 
-                          invariance = c(linking_item, "free_means", "free_var"),
-                          technical = list(NCYCLES = 50000))
-  mg_coef <- coef(fit_mg, simplify = TRUE)
-  
-  # Perform DIF analysis
-  dif_res <- DIF(fit_mg, which.par = c("a1", paste0("d", 1:9)), 
-                 scheme = "add_sequential", 
-                 technical = list(NCYCLES = 50000))
-  dif_items <- rownames(dif_res)
-  
-  anchor_items <- setdiff(item_names, dif_items)
-  
-  # Get parameter table from bifactor model
-  hz_mg_pars <- mod2values(fit_mg)
-  
-  # Constrain all HRS item parameters to their banked values
-  for(i in item_names) {
-    hz_mg_pars[hz_mg_pars$item == i, "value" ] <- rep(bank_hrs[bank_hrs$item == i, "value"], 2)
-  }
-  
-  # Set DIF items
-  for(i in setdiff(item_names, anchor_items)) {
-    hz_mg_pars[hz_mg_pars$item == i & hz_mg_pars$group == "A_HRS", "value"] <- bank_hrs[bank_hrs$item == i, "value"]
-    hz_mg_pars[hz_mg_pars$item == i & hz_mg_pars$group == "B_HAALSI", "value"] <- bank_haalsi[bank_haalsi$item == i, "value"]
-  }
-  
-  hz_mg_pars$est <- FALSE
-  hz_mg_pars <- hz_mg_pars %>%
-    mutate(est = ifelse(item %in% setdiff(item_names, anchor_items) & value != 0, TRUE, est)) %>%
-    mutate(est = ifelse(group == "B_HAALSI" & name %in% c("MEAN_1", "COV_11"), TRUE, est))
-  
-  # Check item parameters
-  hz_mg_pars_check <- hz_mg_pars %>%
-    filter(item %in% item_names, name %in% c("a1", paste0("d", 1:9))) %>%
-    arrange(item, group, name)
-  
-  # Fit final multiple group model
-  hz_model <- multipleGroup(sim_data_r %>% select(ends_with(suffix)),
-                            model = 1, group = sim_data_r$study,
-                            itemtype = "graded", pars = hz_mg_pars,
-                            technical = list(NCYCLES = 50000), SE = TRUE)
-  hz_model_coef <- coef(hz_model, simplify = TRUE)
-  
-  # Fix all parameters to their estimates and generate factor scores
-  hz_model_pars <- mod2values(hz_model)
-  hz_model_pars$est <- FALSE
-  hz_model1 <- multipleGroup(sim_data_r %>% select(ends_with(suffix)),
-                             model = 1, group = sim_data_r$study,
-                             itemtype = "graded", pars = hz_model_pars,
-                             technical = list(NCYCLES = 50000))
-  hz_model_fscores <- fscores(hz_model1, full.scores.SE = TRUE, QMC = TRUE) %>%
-    as_tibble()
-  
-  hcap_haalsi_memory_fs <- hcap_haalsi_memory %>%
-    bind_cols(hz_model_fscores)
-  
-  # Plot and run linear model
-  plot <- ggplot(hcap_haalsi_memory_fs, aes(x = fmem, y = F1, colour = cohort)) +
-    geom_point() + geom_smooth(method = "lm")
-  
-  lm_model <- lm(F1 ~ depression + hyper, data = hcap_haalsi_memory_fs) %>% 
-    summary()
-  
-  return(list(sim_data = sim_data, sem_summary = sem_summary, mirt_coef = mirt_coef, mg_coef = mg_coef, 
-              dif_items = dif_items, hz_mg_pars_check = hz_mg_pars_check, 
-              hz_model_coef = hz_model_coef, plot = plot, lm_model = lm_model))
+
+# Process the data
+print(paste("Processing suffix:", suffix))
+
+# Fit SEM model
+sem_model <- sem(model_formula, data = sim_data_r, ordered = TRUE, 
+                 estimator = "wlsmv", std.lv = TRUE)
+sem_summary <- summary(sem_model, fit.measures = TRUE, standardize = TRUE)
+
+# Fit MIRT model
+mirt_model <- mirt(sim_data_r %>% select(ends_with(suffix)), 
+                   model = 1, itemtype = "graded")
+mirt_coef <- coef(mirt_model, simplify = TRUE)
+
+# Randomly select a linking item
+linking_item_number <- sample(1:4, 1)
+linking_item <- item_names[linking_item_number]
+
+# Fit HRS model
+fit_hrs <- mirt(sim_data_r %>% filter(cohort == "HRS") %>% select(ends_with(suffix)),
+                model = 1, itemtype = "graded", SE = TRUE, 
+                technical = list(NCYCLES = 50000))
+bank_hrs <- mod2values(fit_hrs)
+
+# Update study column
+sim_data_r <- sim_data_r %>%
+  mutate(study = ifelse(group == 1, "A_HRS", "B_HAALSI"))
+
+# Fit HAALSI model
+fit_haalsi <- mirt(sim_data_r %>% filter(cohort == "HAALSI") %>% select(ends_with(suffix)),
+                   model = 1, itemtype = "graded", SE = TRUE, 
+                   technical = list(NCYCLES = 50000))
+bank_haalsi <- mod2values(fit_haalsi)
+
+# Fit multiple group model
+fit_mg <- multipleGroup(sim_data_r %>% select(ends_with(suffix)), 
+                        model = 1, itemtype = "graded", 
+                        group = sim_data_r$study, SE = TRUE, 
+                        invariance = c(linking_item, "free_means", "free_var"),
+                        technical = list(NCYCLES = 50000))
+mg_coef <- coef(fit_mg, simplify = TRUE)
+
+# Perform DIF analysis
+dif_res <- DIF(fit_mg, which.par = c("a1", paste0("d", 1:9)), 
+               scheme = "add_sequential", 
+               technical = list(NCYCLES = 50000))
+dif_items <- rownames(dif_res)
+
+anchor_items <- setdiff(item_names, dif_items)
+
+# Get parameter table from bifactor model
+hz_mg_pars <- mod2values(fit_mg)
+
+# Constrain all HRS item parameters to their banked values
+for(i in item_names) {
+  hz_mg_pars[hz_mg_pars$item == i, "value" ] <- rep(bank_hrs[bank_hrs$item == i, "value"], 2)
 }
-results_ef <- process_data("ef", iter = 1)
-results_ei <- process_data("ei", iter = 1)
+
+# Set DIF items
+for(i in setdiff(item_names, anchor_items)) {
+  hz_mg_pars[hz_mg_pars$item == i & hz_mg_pars$group == "A_HRS", "value"] <- bank_hrs[bank_hrs$item == i, "value"]
+  hz_mg_pars[hz_mg_pars$item == i & hz_mg_pars$group == "B_HAALSI", "value"] <- bank_haalsi[bank_haalsi$item == i, "value"]
+}
+
+hz_mg_pars$est <- FALSE
+hz_mg_pars <- hz_mg_pars %>%
+  mutate(est = ifelse(item %in% setdiff(item_names, anchor_items) & value != 0, TRUE, est)) %>%
+  mutate(est = ifelse(group == "B_HAALSI" & name %in% c("MEAN_1", "COV_11"), TRUE, est))
+
+# Check item parameters
+hz_mg_pars_check <- hz_mg_pars %>%
+  filter(item %in% item_names, name %in% c("a1", paste0("d", 1:9))) %>%
+  arrange(item, group, name)
+
+# Fit final multiple group model
+hz_model <- multipleGroup(sim_data_r %>% select(ends_with(suffix)),
+                          model = 1, group = sim_data_r$study,
+                          itemtype = "graded", pars = hz_mg_pars,
+                          technical = list(NCYCLES = 50000), SE = TRUE)
+hz_model_coef <- coef(hz_model, simplify = TRUE)
+
+# Fix all parameters to their estimates and generate factor scores
+hz_model_pars <- mod2values(hz_model)
+hz_model_pars$est <- FALSE
+hz_model1 <- multipleGroup(sim_data_r %>% select(ends_with(suffix)),
+                           model = 1, group = sim_data_r$study,
+                           itemtype = "graded", pars = hz_model_pars,
+                           technical = list(NCYCLES = 50000))
+hz_model_fscores <- fscores(hz_model1, full.scores.SE = TRUE, QMC = TRUE) %>%
+  as_tibble()
+
+hcap_haalsi_memory_fs <- hcap_haalsi_memory %>%
+  bind_cols(hz_model_fscores)
+
+# Plot and run linear model
+plot <- ggplot(hcap_haalsi_memory_fs, aes(x = fmem, y = F1, colour = cohort)) +
+  geom_point() + geom_smooth(method = "lm")
+
+lm_model <- lm(F1 ~ depression + hyper, data = hcap_haalsi_memory_fs) %>% 
+  summary()
+
+return(list(sim_data = sim_data, sem_summary = sem_summary, mirt_coef = mirt_coef, mg_coef = mg_coef, 
+            dif_items = dif_items, hz_mg_pars_check = hz_mg_pars_check, 
+            hz_model_coef = hz_model_coef, plot = plot, lm_model = lm_model))
+}
+
+results_ef <- process_data("ef", iter = 2)
+results_ei <- process_data("ei", iter = 2)
 
 # check if the same simulate data is used
 diffdf::diffdf(results_ef$sim_data, results_ei$sim_data)
 
 
-
-# Parallel 
-# This wouldn't do parallel without errors yet
-p_load(doParallel, parallel)
-n_iterations <- 2
-reqpackage <- c("dplyr", "ggplot2", "psych",
-                "data.table", "tidyr", "janitor", "hablar", "mirt", "faux",
-                "Hmisc", "arules", "discretization", "synthpop", "lavaan",
-                "stringr", "sqldf")
-
-cl <- makeCluster(4)
-registerDoParallel(cl)
-
 results <- list()
-dif_items_df <- tibble()
-
-# Process data for both _ef and _ei suffixes
-foreach (i = 1:n_iterations, .packages = reqpackage) %dopar% {
-  # Run for both _ef and _ei suffixes
-  results_ef <- process_data("ef", iter = i)
-  results_ei <- process_data("ei", iter = i)
-
-  # Store the results
-  results[[paste0("iter_", i, "_ef")]] <- results_ef
-  results[[paste0("iter_", i, "_ei")]] <- results_ei
-
-  # Collect DIF items for both suffixes
-  # dif_items_df <- rbind(dif_items_df,
-  #                       data.frame(Iteration = i, Suffix = "ef",
-  #                                  DIF_Item = results_ef$dif_items,
-  #                                  stringsAsFactors = FALSE))
-  # dif_items_df <- rbind(dif_items_df,
-  #                       data.frame(Iteration = i, Suffix = "ei",
-  #                                  DIF_Item = results_ei$dif_items,
-  #                                  stringsAsFactors = FALSE))
-  saveRDS(results, here::here("output", paste0("results_", iter, ".rds")))
+nsims <- 20
+successes <- 0
+tries <- 0
+while (successes < nsims) {
+  
+  tries <- tries + 1
+  
+  results_ef <- tryCatch(process_data("ef", iter = tries), error = function(e) e, 
+                         finally = print("Error"))
+  
+  if(!"error" %in% class(results_ef)) {
+    results_ei <- tryCatch(process_data("ei", iter = tries), error = function(e) e, 
+                           finally = print("Error"))
+    
+    if(!"error" %in% class(results_ei)) {
+      successes <- successes + 1
+      results[[paste0("iter_", i, "_ef")]] <- results_ef
+      results[[paste0("iter_", i, "_ei")]] <- results_ei
+    }
+  }
 }
-stopCluster(cl)
+
+# # Parallel 
+# # This wouldn't do parallel without errors yet
+# p_load(doParallel, parallel)
+# reqpackage <- c("dplyr", "ggplot2", "psych",
+#                 "data.table", "tidyr", "janitor", "hablar", "mirt", "faux",
+#                 "Hmisc", "arules", "discretization", "synthpop", "lavaan",
+# "stringr", "sqldf")
+# # Process data for both _ef and _ei suffixes
+# cl <- makeCluster(4)
+# registerDoParallel(cl)
+# 
+# foreach (i = 1:nsims, .packages = reqpackage) %dopar% {
+#   # Run for both _ef and _ei suffixes
+#   results_ef <- process_data("ef", iter = i)
+#   results_ei <- process_data("ei", iter = i)
+# 
+#   # Store the results
+#   results[[paste0("iter_", i, "_ef")]] <- results_ef
+#   results[[paste0("iter_", i, "_ei")]] <- results_ei
+# 
+#   # # Collect DIF items for both suffixes
+#   # dif_items_df <- rbind(dif_items_df,
+#   #                       data.frame(Iteration = i, Suffix = "ef",
+#   #                                  DIF_Item = results_ef$dif_items,
+#   #                                  stringsAsFactors = FALSE))
+#   # dif_items_df <- rbind(dif_items_df,
+#   #                       data.frame(Iteration = i, Suffix = "ei",
+#   #                                  DIF_Item = results_ei$dif_items,
+#   #                                  stringsAsFactors = FALSE))
+#   saveRDS(results, here::here("output", paste0("results_", iter, ".rds")))
+# }
+# stopCluster(cl)
 
 
 
