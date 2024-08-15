@@ -162,7 +162,8 @@ pop_mem_pars$formula <- NULL
 
 
 #---- Simulation and discretizatin function ----
-process_data <- function(suffix) {
+process_data <- function(suffix, iter) {
+  set.seed(iter)
   # Simulate the data based on population parameters
   sim_data <- simulateData(model = pop_mem_pars, 
                            model.type = "sem", 
@@ -180,7 +181,7 @@ process_data <- function(suffix) {
                     \(x) as.numeric(cut2(x, g = 10, m = 5)), .names = "{.col}_ef"))
   } else if (suffix == "ei"){
     for (n_obs in 5:200){
-      test <- recodeOrdinal(sim_data_r, 
+      test <- recodeOrdinal(sim_data, 
                             varlist_orig = c("lmi", "lmd", "lm_recog", "cerad_cpd"),
                             varlist_tr = c("lmi_ei", "lmd_ei", "lm_recog_ei", "cerad_cpd_ei"),
                             nobs = n_obs) %>%
@@ -202,7 +203,7 @@ process_data <- function(suffix) {
     }
     
     sim_data_r <- recodeOrdinal(
-      sim_data_r, 
+      sim_data, 
       varlist_orig = c("lmi", "lmd", "lm_recog", "cerad_cpd"),
       varlist_tr = c("lmi_ei", "lmd_ei", "lm_recog_ei", "cerad_cpd_ei"),
       ncat = 10, nobs = n_obs)
@@ -319,14 +320,57 @@ process_data <- function(suffix) {
   lm_model <- lm(F1 ~ depression + hyper, data = hcap_haalsi_memory_fs) %>% 
     summary()
   
-  return(list(sem_summary = sem_summary, mirt_coef = mirt_coef, mg_coef = mg_coef, 
-       dif_items = dif_items, hz_mg_pars_check = hz_mg_pars_check, 
-       hz_model_coef = hz_model_coef, plot = plot, lm_model = lm_model))
+  return(list(sim_data = sim_data, sem_summary = sem_summary, mirt_coef = mirt_coef, mg_coef = mg_coef, 
+              dif_items = dif_items, hz_mg_pars_check = hz_mg_pars_check, 
+              hz_model_coef = hz_model_coef, plot = plot, lm_model = lm_model))
 }
+results_ef <- process_data("ef", iter = 1)
+results_ei <- process_data("ei", iter = 1)
+
+# check if the same simulate data is used
+diffdf::diffdf(results_ef$sim_data, results_ei$sim_data)
+
+
+
+# Parallel 
+# This wouldn't do parallel without errors yet
+p_load(doParallel, parallel)
+n_iterations <- 2
+reqpackage <- c("dplyr", "ggplot2", "psych",
+                "data.table", "tidyr", "janitor", "hablar", "mirt", "faux",
+                "Hmisc", "arules", "discretization", "synthpop", "lavaan",
+                "stringr", "sqldf")
+
+cl <- makeCluster(4)
+registerDoParallel(cl)
+
+results <- list()
+dif_items_df <- tibble()
 
 # Process data for both _ef and _ei suffixes
-results_ef <- process_data("ef")
-results_ei <- process_data("ei")
+foreach (i = 1:n_iterations, .packages = reqpackage) %dopar% {
+  # Run for both _ef and _ei suffixes
+  results_ef <- process_data("ef", iter = i)
+  results_ei <- process_data("ei", iter = i)
+
+  # Store the results
+  results[[paste0("iter_", i, "_ef")]] <- results_ef
+  results[[paste0("iter_", i, "_ei")]] <- results_ei
+
+  # Collect DIF items for both suffixes
+  # dif_items_df <- rbind(dif_items_df,
+  #                       data.frame(Iteration = i, Suffix = "ef",
+  #                                  DIF_Item = results_ef$dif_items,
+  #                                  stringsAsFactors = FALSE))
+  # dif_items_df <- rbind(dif_items_df,
+  #                       data.frame(Iteration = i, Suffix = "ei",
+  #                                  DIF_Item = results_ei$dif_items,
+  #                                  stringsAsFactors = FALSE))
+  saveRDS(results, here::here("output", paste0("results_", iter, ".rds")))
+}
+stopCluster(cl)
+
+
 
 # You can access the results using results_ef and results_ei
 ###loop through sapply to get a table of dif_items
