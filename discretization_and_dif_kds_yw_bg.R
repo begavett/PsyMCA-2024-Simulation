@@ -1,6 +1,7 @@
 library(pacman)
 p_load(dplyr, magrittr, ggplot2, psych, data.table, tidyr, janitor, hablar,
-       mirt, faux, Hmisc, arules, discretization, synthpop, lavaan, stringr, sqldf)
+       mirt, faux, Hmisc, arules, discretization, synthpop, lavaan, stringr, 
+       sqldf, semTools)
 
 source(here::here("recode.R"))
 
@@ -163,62 +164,91 @@ pop_mem_pars$formula <- NULL
 
 #---- Simulation and discretizatin function ----
 process_data <- function(suffix, iter) {
+  cat(paste("Simulating data:", suffix))
   set.seed(iter)
   # Simulate the data based on population parameters
   sim_data <- simulateData(model = pop_mem_pars, 
                            model.type = "sem", 
                            std.lv = TRUE,
                            estimator = "mlr",
-                           sample.nobs = c(pop_hyppar$n[pop_hyppar$study == 1], 
-                                           pop_hyppar$n[pop_hyppar$study == 5])) %>%
+                           sample.nobs = c(20*pop_hyppar$n[pop_hyppar$study == 1], 
+                                           20*pop_hyppar$n[pop_hyppar$study == 5])) %>%
     mutate(across(lmi:cerad_cpd, round),
            cohort = ifelse(group == 1, "HRS", "HAALSI"))
   
+  
+  mem_cfa <- '
+  mem =~ lmi + lmd + lm_recog + cerad_cpd
+  '
+  
+  test.seq <- c("loadings","intercepts")
+  meq.list <- list()
+  for (i in 0:length(test.seq)) {
+    if (i == 0L) {
+      meq.label <- "configural"
+      group.equal <- ""
+      long.equal <- ""
+    } else {
+      meq.label <- test.seq[i]
+      group.equal <- test.seq[1:i]
+      long.equal <- test.seq[1:i]
+    }
+    meq.list[[meq.label]] <- measEq.syntax(configural.model = mem_cfa,
+                                           data = sim_data,
+                                           ID.fac = "std.lv",
+                                           group = "cohort",
+                                           group.equal = group.equal,
+                                           return.fit = TRUE)
+  }
+  
+  mi_out <- compareFit(meq.list)
+  summary(mi_out)
+  
   # Discretization
-  for (n_obs in 2:64){
+  for (n_obs in 10:500){
     if (suffix == "ef"){
       test <- sim_data %>%
         mutate(across(c(lmi, lmd, lm_recog, cerad_cpd),
-                      \(x) as.numeric(cut2(x, g = 11, m = n_obs)), .names = "{.col}_ef")) %>%
+                      \(x) as.numeric(cut2(x, g = 10, m = n_obs)), .names = "{.col}_ef")) %>%
         select(group, ends_with("ef"))
     } else if (suffix == "ei"){
       test <- recodeOrdinal(sim_data,
                             varlist_orig = c("lmi", "lmd", "lm_recog", "cerad_cpd"),
                             varlist_tr = c("lmi_ei", "lmd_ei", "lm_recog_ei", "cerad_cpd_ei"),
-                            ncat = 11,
+                            ncat = 10,
                             nobs = n_obs) %>%
         select(group, ends_with("ei"))
     }
-
+    
     count_tib <- test %>%
       filter(group == 2) %>%
       select(ends_with(suffix)) %>%
       pivot_longer(cols = ends_with(suffix)) %>%
       group_by(name, value) %>%
       dplyr::count()
-
-    if(all(count_tib$n >= 2)){
+    
+    if(all(count_tib$n >= 10)){
       print(n_obs)
       break
     } else if (n_obs == 64){
       stop("No solution found n obs for bin")
     }
   }
-
+  
   
   #n_obs <- 2
   
   if (suffix == "ef"){
     sim_data_r <- sim_data %>%
       mutate(across(c(lmi, lmd, lm_recog, cerad_cpd), 
-                    \(x) as.numeric(cut2(x, g = 11, m = n_obs)), 
+                    \(x) as.numeric(cut2(x, g = 10, m = n_obs)), 
                     .names = "{.col}_ef")) 
   } else if (suffix == "ei"){
     sim_data_r <- recodeOrdinal(
       sim_data, 
       varlist_orig = c("lmi", "lmd", "lm_recog", "cerad_cpd"),
       varlist_tr = c("lmi_ei", "lmd_ei", "lm_recog_ei", "cerad_cpd_ei"),
-      ncat = 11, nobs = n_obs)
+      ncat = 10, nobs = n_obs)
   }
   
   # Define column names based on the suffix
@@ -233,7 +263,7 @@ process_data <- function(suffix, iter) {
   ', paste(item_names, collapse = " + "))
   
   # Process the data
-  print(paste("Processing suffix:", suffix))
+  cat(paste("Processing suffix:", suffix))
   
   # Fit SEM model
   sem_model <- sem(model_formula, data = sim_data_r, ordered = TRUE, 
@@ -251,7 +281,7 @@ process_data <- function(suffix, iter) {
   
   # Fit HRS model
   fit_hrs <- mirt(sim_data_r %>% filter(cohort == "HRS") %>% select(ends_with(suffix)),
-                  model = 1, itemtype = "graded", SE = TRUE, 
+                  model = 1, itemtype = "graded", SE = FALSE, 
                   technical = list(NCYCLES = 50000))
   bank_hrs <- mod2values(fit_hrs)
   
@@ -261,20 +291,20 @@ process_data <- function(suffix, iter) {
   
   # Fit HAALSI model
   fit_haalsi <- mirt(sim_data_r %>% filter(cohort == "HAALSI") %>% select(ends_with(suffix)),
-                     model = 1, itemtype = "graded", SE = TRUE, 
+                     model = 1, itemtype = "graded", SE = FALSE, 
                      technical = list(NCYCLES = 50000))
   bank_haalsi <- mod2values(fit_haalsi)
   
   # Fit multiple group model
   fit_mg <- multipleGroup(sim_data_r %>% select(ends_with(suffix)), 
                           model = 1, itemtype = "graded", 
-                          group = sim_data_r$study, SE = TRUE, 
+                          group = sim_data_r$study, SE = FALSE, 
                           invariance = c(linking_item, "free_means", "free_var"),
                           technical = list(NCYCLES = 50000))
   mg_coef <- coef(fit_mg, simplify = TRUE)
   
   # Perform DIF analysis
-  dif_res <- DIF(fit_mg, which.par = c("a1", paste0("d", 1:10)), 
+  dif_res <- DIF(fit_mg, which.par = c("a1", paste0("d", 1:9)), 
                  scheme = "add_sequential", 
                  technical = list(NCYCLES = 50000))
   dif_items <- rownames(dif_res)
@@ -289,10 +319,22 @@ process_data <- function(suffix, iter) {
     hz_mg_pars[hz_mg_pars$item == i, "value" ] <- rep(bank_hrs[bank_hrs$item == i, "value"], 2)
   }
   
-  # Set DIF items
-  for(i in setdiff(item_names, anchor_items)) {
-    hz_mg_pars[hz_mg_pars$item == i & hz_mg_pars$group == "A_HRS", "value"] <- bank_hrs[bank_hrs$item == i, "value"]
-    hz_mg_pars[hz_mg_pars$item == i & hz_mg_pars$group == "B_HAALSI", "value"] <- bank_haalsi[bank_haalsi$item == i, "value"]
+  if(length(dif_items) > 0) {
+    # Set DIF items
+    for(i in setdiff(item_names, anchor_items)) {
+      hz_mg_pars[hz_mg_pars$item == i & hz_mg_pars$group == "A_HRS", "value"] <- bank_hrs[bank_hrs$item == i, "value"]
+      
+      if (length(bank_haalsi[bank_haalsi$item == i, "value"]) == length(hz_mg_pars[hz_mg_pars$item == i & hz_mg_pars$group == "B_HAALSI", "value"])) {
+        hz_mg_pars[hz_mg_pars$item == i & hz_mg_pars$group == "B_HAALSI", "value"] <- bank_haalsi[bank_haalsi$item == i, "value"]
+      } else {
+        use_pars <- paste("B_HAALSI", bank_haalsi$item, bank_haalsi$name, sep = "_")
+        hz_mg_pars <- hz_mg_pars %>%
+          mutate(label = paste(group, item, name, sep = "_")) %>%
+          filter(label %in% use_pars) %>%
+          select(-label)
+        hz_mg_pars[hz_mg_pars$item == i & hz_mg_pars$group == "B_HAALSI", "value"] <- bank_haalsi[bank_haalsi$item == i, "value"]
+      }
+    }
   }
   
   hz_mg_pars$est <- FALSE
@@ -302,14 +344,14 @@ process_data <- function(suffix, iter) {
   
   # Check item parameters
   hz_mg_pars_check <- hz_mg_pars %>%
-    filter(item %in% item_names, name %in% c("a1", paste0("d", 1:10))) %>%
+    filter(item %in% item_names, name %in% c("a1", paste0("d", 1:9))) %>%
     arrange(item, group, name)
   
   # Fit final multiple group model
   hz_model <- multipleGroup(sim_data_r %>% select(ends_with(suffix)),
                             model = 1, group = sim_data_r$study,
                             itemtype = "graded", pars = hz_mg_pars,
-                            technical = list(NCYCLES = 50000), SE = TRUE)
+                            technical = list(NCYCLES = 50000), SE = FALSE)
   hz_model_coef <- coef(hz_model, simplify = TRUE)
   
   # Fix all parameters to their estimates and generate factor scores
@@ -319,21 +361,15 @@ process_data <- function(suffix, iter) {
                              model = 1, group = sim_data_r$study,
                              itemtype = "graded", pars = hz_model_pars,
                              technical = list(NCYCLES = 50000))
-  hz_model_fscores <- fscores(hz_model1, full.scores.SE = TRUE, QMC = TRUE) %>%
+  hz_model_fscores <- fscores(hz_model1, full.scores.SE = FALSE, QMC = TRUE) %>%
     as_tibble()
   
-  hcap_haalsi_memory_fs <- hcap_haalsi_memory %>%
-    bind_cols(hz_model_fscores)
-  
+
   sim_data_r_fs <- sim_data_r %>%
     bind_cols(hz_model_fscores)
   
-  
-  # Plot and run linear model
-  plot <- ggplot(hcap_haalsi_memory_fs, aes(x = fmem, y = F1, colour = cohort)) +
-    geom_point() + geom_smooth(method = "lm")
-  
-  lm_model <- lm(F1 ~ depression + hyper, data = hcap_haalsi_memory_fs) %>% 
+
+  lm_model <- lm(F1 ~ depression + hyper, data = sim_data_r_fs) %>% 
     summary()
   
   lm_model_hrs <- lm(F1 ~ depression + hyper, data = sim_data_r_fs %>% 
@@ -347,9 +383,41 @@ process_data <- function(suffix, iter) {
   
   return(list(sim_data = sim_data, sem_summary = sem_summary, mirt_coef = mirt_coef, mg_coef = mg_coef, 
               dif_items = dif_items, hz_mg_pars_check = hz_mg_pars_check, 
-              hz_model_coef = hz_model_coef, plot = plot, lm_model = lm_model,
+              hz_model_coef = hz_model_coef, lm_model = lm_model,
               lm_model_hrs = lm_model_hrs, lm_model_haalsi = lm_model_haalsi))
 }
+
+lm_full_coef <- tibble()
+lm_haalsi_coef <- tibble()
+lm_hrs_coef <- tibble()
+dif_items <- tibble()
+for (s in 1:12){
+  for (type in c("ef", "ei")){
+    lm_full_coef %<>%
+      rbind(broom::tidy(results[[paste0("iter_", s, "_", type)]]$lm_model) %>%
+              mutate(num = s, type = type))
+    lm_haalsi_coef %<>%
+      rbind(broom::tidy(results[[paste0("iter_", s, "_", type)]]$lm_model_haalsi) %>%
+              mutate(num = s, type = type))
+    lm_hrs_coef %<>%
+      rbind(broom::tidy(results[[paste0("iter_", s, "_", type)]]$lm_model_hrs) %>%
+              mutate(num = s, type = type))
+    dif_items %<>%
+      rbind(tibble(num = s, type = type,
+                   dif_items = results[[paste0("iter_", s, "_", type)]]$dif_items))
+    
+  }
+}
+
+lm_haalsi_coef %>%
+  group_by(term, type) %>%
+  dplyr::summarize(mean_est = mean(estimate),
+                   mean_se = mean(std.error))
+
+lm_hrs_coef %>%
+  group_by(term, type) %>%
+  dplyr::summarize(mean_est = mean(estimate),
+                   mean_se = mean(std.error))
 
 # results_ef <- process_data("ef", iter = 1)
 # results_ei <- process_data("ei", iter = 1)
@@ -361,17 +429,17 @@ process_data <- function(suffix, iter) {
 results <- list()
 nsims <- 20
 successes <- 0
-tries <- 0
-max_tries <- 100
+tries <- 10000
+max_tries <- tries+100
 
 while (successes < nsims & tries < max_tries) {
   
   tries <- tries + 1
   
-  results_ef <- tryCatch(process_data("ef", iter = tries), error = function(e) e, finally = print("Error"))
+  results_ef <- tryCatch(process_data("ef", iter = tries), error = function(e) e, finally = print("Done"))
   
   if(!"error" %in% class(results_ef)) {
-    results_ei <- tryCatch(process_data("ei", iter = tries), error = function(e) e, finally = print("Error"))
+    results_ei <- tryCatch(process_data("ei", iter = tries), error = function(e) e, finally = print("Done"))
     
     if(!"error" %in% class(results_ei)) {
       successes <- successes + 1
