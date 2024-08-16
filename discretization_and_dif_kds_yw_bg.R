@@ -398,7 +398,7 @@ process_data <- function(suffix, iter) {
 results <- list()
 nsims <- 20
 successes <- 0
-tries <- 10000
+tries <- 0
 max_tries <- tries+100
 
 while (successes < nsims & tries < max_tries) {
