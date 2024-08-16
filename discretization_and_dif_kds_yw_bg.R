@@ -387,6 +387,38 @@ process_data <- function(suffix, iter) {
               lm_model_hrs = lm_model_hrs, lm_model_haalsi = lm_model_haalsi))
 }
 
+
+# results_ef <- process_data("ef", iter = 1)
+# results_ei <- process_data("ei", iter = 1)
+# 
+# # check if the same simulate data is used
+# diffdf::diffdf(results_ef$sim_data, results_ei$sim_data)
+
+
+results <- list()
+nsims <- 20
+successes <- 0
+tries <- 10000
+max_tries <- tries+100
+
+while (successes < nsims & tries < max_tries) {
+  
+  tries <- tries + 1
+  
+  results_ef <- tryCatch(process_data("ef", iter = tries), error = function(e) e, finally = print("Done"))
+  
+  if(!"error" %in% class(results_ef)) {
+    results_ei <- tryCatch(process_data("ei", iter = tries), error = function(e) e, finally = print("Done"))
+    
+    if(!"error" %in% class(results_ei)) {
+      successes <- successes + 1
+      results[[paste0("iter_", successes, "_ef")]] <- results_ef
+      results[[paste0("iter_", successes, "_ei")]] <- results_ei
+    }
+  }
+  cat(paste0("Tries = ", tries, "; Successes = ", successes, "\n"))
+}
+
 lm_full_coef <- tibble()
 lm_haalsi_coef <- tibble()
 lm_hrs_coef <- tibble()
@@ -419,36 +451,6 @@ lm_hrs_coef %>%
   dplyr::summarize(mean_est = mean(estimate),
                    mean_se = mean(std.error))
 
-# results_ef <- process_data("ef", iter = 1)
-# results_ei <- process_data("ei", iter = 1)
-# 
-# # check if the same simulate data is used
-# diffdf::diffdf(results_ef$sim_data, results_ei$sim_data)
-
-
-results <- list()
-nsims <- 20
-successes <- 0
-tries <- 10000
-max_tries <- tries+100
-
-while (successes < nsims & tries < max_tries) {
-  
-  tries <- tries + 1
-  
-  results_ef <- tryCatch(process_data("ef", iter = tries), error = function(e) e, finally = print("Done"))
-  
-  if(!"error" %in% class(results_ef)) {
-    results_ei <- tryCatch(process_data("ei", iter = tries), error = function(e) e, finally = print("Done"))
-    
-    if(!"error" %in% class(results_ei)) {
-      successes <- successes + 1
-      results[[paste0("iter_", successes, "_ef")]] <- results_ef
-      results[[paste0("iter_", successes, "_ei")]] <- results_ei
-    }
-  }
-  cat(paste0("Tries = ", tries, "; Successes = ", successes, "\n"))
-}
 
 # # Parallel 
 # # This wouldn't do parallel without errors yet
