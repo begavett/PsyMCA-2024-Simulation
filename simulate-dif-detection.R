@@ -116,6 +116,24 @@ hrs_haalsi_cog <- original_data %>%
   )
 
 
+hrs_haalsi_cog %>%
+  select(ends_with(c("_cont"))) %>%
+  lapply(table)
+
+hrs_haalsi_cog %>%
+  select(ends_with(c("_cont"))) %>%
+  psych::describe()
+
+sk <- hrs_haalsi_cog %>%
+  select(ends_with(c("_cont"))) %>%
+  psych::describe() %>%
+  data.frame() %>%
+  select(skew, kurtosis)
+
+sk %>%
+  cor()
+
+
 # Population Parameters ---------------------------------------------------
 
 
@@ -162,6 +180,10 @@ loadings <- rnorm(n = n_items) %>%
   abs() %>%
   fisherz2r() %>%
   round(3)
+set.seed(245)
+skew_kurt <- MASS::mvrnorm(10, mu = colMeans(sk), Sigma = data.matrix(sk %>% cor())) %>%
+  data.frame()
+
 
 # Specify population model in reference group
 population_model_rg <- paste0('cog =~ ', paste0(paste0(loadings, "*x", 1:n_items), collapse = " + "), 
@@ -182,6 +204,8 @@ pop_data_rg <- simulateData(model = population_model_rg,
                             sample.nobs = pop_n_sim_RG,
                             model.type = "cfa",
                             estimator = "mlr", 
+                            skewness = skew_kurt$skew,
+                            kurtosis = skew_kurt$kurtosis,
                             seed = 48291) %>%
   mutate(group = "Reference") %>%
   as.data.table()
@@ -191,6 +215,8 @@ pop_data_fg <- simulateData(model = population_model_fg,
                             sample.nobs = pop_n_sim_FG,
                             model.type = "cfa",
                             estimator = "mlr",
+                            skewness = skew_kurt$skew,
+                            kurtosis = skew_kurt$kurtosis,
                             seed = 47819) %>%
   mutate(group = "Focal") %>%
   as.data.table()
@@ -198,6 +224,17 @@ pop_data_fg <- simulateData(model = population_model_fg,
 
 pop_data_all <- rbind(pop_data_rg, pop_data_fg)
 rm(pop_data_rg, pop_data_fg)
+
+pop_data_all %>%
+  sample_n(10000) %>%
+  pivot_longer(cols = starts_with("x"),
+               names_to = "item",
+               values_to = "score") %>%
+  mutate(item = factor(item, levels = paste0("x", 1:max(parse_number(item))))) %>%
+  ggplot(aes(x = score, fill = group)) +
+  geom_histogram(position = "dodge") +
+  facet_wrap(~item, ncol = 5) +
+  xlim(-5, 5)
 
 psych::describeBy(pop_data_all, pop_data_all$group)
 
@@ -213,10 +250,12 @@ pop_data_npsy <- copy(pop_data_all)
 
 # Convert population data to a format that is more typical of actual neuropsych data - integers with lower and upper bounds of 0 and 20, respectively, some with non-normal distributions
 # First 5 items have positive skew
-pop_data_npsy[, (paste0("x", 1:(n_items/2))) := lapply(.SD, function(x) replace(round(2 * (x + 0.5*abs(min(x))), 0), which(round(2 * (x + 0.5*abs(min(x))), 0) < 0), 0)), .SDcols = paste0("x", 1:(n_items/2))]
-
-# Second 5 items have negative skew
-pop_data_npsy[, (paste0("x", (1 + (n_items/2)):n_items)) := lapply(.SD, function(x) replace(round(2 * (x + 1.5*abs(min(x))), 0), which(round(2 * (x + 1.5*abs(min(x))), 0) > 20), 20)), .SDcols = paste0("x", (1 + (n_items/2)):n_items)]
+# pop_data_npsy[, (paste0("x", 1:(n_items/2))) := lapply(.SD, function(x) replace(round(2 * (x + 0.5*abs(min(x))), 0), which(round(2 * (x + 0.5*abs(min(x))), 0) < 0), 0)), .SDcols = paste0("x", 1:(n_items/2))]
+# 
+# # Second 5 items have negative skew
+# pop_data_npsy[, (paste0("x", (1 + (n_items/2)):n_items)) := lapply(.SD, function(x) replace(round(2 * (x + 1.5*abs(min(x))), 0), which(round(2 * (x + 1.5*abs(min(x))), 0) > 20), 20)), .SDcols = paste0("x", (1 + (n_items/2)):n_items)]
+# 
+pop_data_npsy[, paste0("x", 1:n_items) := lapply(.SD, function(x) round(x + abs(min(x)), 0)),  .SDcols = paste0("x", 1:n_items)]
 
 psych::describeBy(pop_data_npsy, pop_data_npsy$group)
 lapply(pop_data_npsy, table)
@@ -604,7 +643,8 @@ res2 %>%
   theme(axis.title.x = element_blank(),
         axis.text.x = element_blank(),
         axis.ticks.x = element_blank()) +
-  scale_fill_discrete(name = "Type")
+  scale_fill_discrete(name = "Type") +
+  ylim(0, 100)
 
 
 res2 %>%
@@ -628,7 +668,8 @@ res2 %>%
   theme(axis.title.x = element_blank(),
         axis.text.x = element_blank(),
         axis.ticks.x = element_blank()) +
-  scale_fill_discrete(name = "Type")
+  scale_fill_discrete(name = "Type") +
+  ylim(0, 100)
 
 
 res2 %>%
