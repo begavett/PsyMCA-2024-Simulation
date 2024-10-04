@@ -58,7 +58,7 @@ df1 <- df1 %>% mutate(
 # sd(df1$agep2s)
 # sd(df1$age_75^2)
 # cor(df1$agep1s,df1$agep2s)
-
+#
 # mean(df1$timep1)
 # mean(df1$timep1s)
 # mean(df1$time)
