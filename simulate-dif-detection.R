@@ -1,7 +1,14 @@
 library(pacman)
 p_load(dplyr, magrittr, ggplot2, psych, data.table, tidyr, janitor, hablar,
        mirt, faux, Hmisc, arules, discretization, synthpop, lavaan, stringr, 
-       sqldf, semTools, sjmisc, future.apply, readr, progressr, semhelpinghands)
+       sqldf, semTools, sjmisc, future.apply, readr, progressr, semhelpinghands,
+       furrr, filelock)
+
+write_to_log <- function(iteration, log_file) {
+  lock <- filelock::lock(log_file)
+  cat(paste(Sys.time(), "- Iteration:", iteration, "completed\n"), file = log_file, append = TRUE)
+  filelock::unlock(lock)
+}
 
 #---- Load and preprocess the data ----
 # Use the dialog box to open ~/Dropbox/Projects/PsyMCA-2024-Simulation/data/HCAP_harmonized_data_PsyMCA-v6.rdata
@@ -181,7 +188,7 @@ loadings <- rnorm(n = n_items) %>%
   fisherz2r() %>%
   round(3)
 set.seed(245)
-skew_kurt <- MASS::mvrnorm(10, mu = colMeans(sk), Sigma = data.matrix(sk %>% cor())) %>%
+skew_kurt <- MASS::mvrnorm(10, mu = colMeans(sk), Sigma = data.matrix(sk %>% cov())) %>%
   data.frame()
 
 
@@ -237,6 +244,7 @@ pop_data_all %>%
   xlim(-5, 5)
 
 psych::describeBy(pop_data_all, pop_data_all$group)
+skew_kurt
 
 cfa_1f <- paste0("cog =~ NA*", paste0("x", 1:10, collapse = " + "))
 
@@ -255,11 +263,12 @@ pop_data_npsy <- copy(pop_data_all)
 # # Second 5 items have negative skew
 # pop_data_npsy[, (paste0("x", (1 + (n_items/2)):n_items)) := lapply(.SD, function(x) replace(round(2 * (x + 1.5*abs(min(x))), 0), which(round(2 * (x + 1.5*abs(min(x))), 0) > 20), 20)), .SDcols = paste0("x", (1 + (n_items/2)):n_items)]
 # 
-pop_data_npsy[, paste0("x", 1:n_items) := lapply(.SD, function(x) round(x + abs(min(x)), 0)),  .SDcols = paste0("x", 1:n_items)]
+pop_data_npsy[, paste0("x", 1:n_items) := lapply(.SD, function(x) round(3*(x - min(x)), 0)),  .SDcols = paste0("x", 1:n_items)]
 
 psych::describeBy(pop_data_npsy, pop_data_npsy$group)
 lapply(pop_data_npsy, table)
 
+set.seed(444)
 pop_data_npsy %>%
   sample_n(10000) %>%
   pivot_longer(cols = starts_with("x"),
@@ -268,7 +277,7 @@ pop_data_npsy %>%
   mutate(item = factor(item, levels = paste0("x", 1:max(parse_number(item))))) %>%
   ggplot(aes(x = score, fill = group)) +
   geom_histogram(position = "dodge", binwidth = 1) +
-  facet_wrap(~item, ncol = 5)
+  facet_wrap(~item, ncol = 5, scales = "free")
   
 pop_cfa_npsy <- cfa(cfa_1f, data = pop_data_npsy, estimator = "mlr", group = "group",
     std.lv = TRUE,
@@ -451,8 +460,8 @@ mimic_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group
 
 sim_dif_detection <- function(iter, 
                               suffixes = c("ef", "ei", "km"), 
-                              n_RG = 500, 
-                              n_FG = 100, 
+                              n_RG = 3496, 
+                              n_FG = 631, 
                               model_syntax = cfa_1f, 
                               model_partable = pop_cfa_model, 
                               recoding_scheme = all_recoding_schemes, 
@@ -558,6 +567,9 @@ sim_dif_detection <- function(iter,
     mutate(candidate_item = str_split_i(candidate_item, "_", 1),
            sim = iter)
   
+  
+  write_to_log(iter, log_file)
+  
   return(dif_results)
   
 }
@@ -566,19 +578,21 @@ sim_dif_detection <- function(iter,
 
 # Run Simulations ---------------------------------------------------------
 
-test1 <- sim_dif_detection(iter = 73)
+test1 <- sim_dif_detection(iter = 31)
 
 iter_start <- 1
 nsims <- 500
 iter_end <- iter_start + nsims - 1
 
-# test2 <- Map(sim_dif_detection, iter = iter_start:iter_end)
+test2 <- Map(sim_dif_detection, iter = iter_start:iter_end)
 
 
 plan(multisession, workers = 4)
 
 # Enable progress reporting
 handlers(global = TRUE)
+
+log_file <- "sim_dif_log.txt"
 
 with_progress({
   p <- progressor(along = iter_start:iter_end)
@@ -602,7 +616,7 @@ res2 <- test2 %>%
   rbindlist(fill = TRUE)
 rm(test2)
 #saveRDS(res2, "Output/res2.Rds")
-res2 <- readRDS("Output/res2.Rds")
+#res2 <- readRDS("Output/res2.Rds")
 
 res2
 
