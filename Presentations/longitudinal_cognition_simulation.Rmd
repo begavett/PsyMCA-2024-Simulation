@@ -1,0 +1,740 @@
+---
+title: "Untitled"
+author: "Dan Mungas"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(dplyr)
+require(lme4)
+require(brms)
+require(ggplot2)
+require(loo)
+
+```
+
+```{r data, include =FALSE,warning=FALSE,message=FALSE,cache=FALSE}
+
+# save model objects
+# save(fit_vm_poly_pr_age,fit_vm_poly_pr_age1,fit_vm_poly_pr_ages,fit_vm_age_pr_poly,fit_vm_age_pr_polys,
+#      fit_vm_poly_pr_age_brm,fit_vm_poly_pr_age_brms,fit_vm_poly_pr_age_brms1,fit_vm_poly_pr_age_brm1,
+#      fit_vm_age_pr_brm_polys,fit_vm_age_pr_brm_polys1,fit_vm_poly_pr_age_sim_brms_15,
+#      fit_vm_poly_pr_age_brmspa,
+#      file="~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/akls_longitudinal_model_objects.RData")
+
+load("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/akls_longitudinal_model_objects.RData")
+
+rm(fit_vm_poly_pr_age,fit_vm_poly_pr_age1,fit_vm_poly_pr_ages,fit_vm_age_pr_poly,fit_vm_age_pr_polys)
+
+df <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/akls_longitudinal.rds")
+
+df1 <- df %>% filter(!is.na(age_75))
+z <- poly(df1$age_75,2)
+df1 <- df1 %>% bind_cols(z) %>% rename(agep1 = `1`, agep2 = `2`)
+rm(z)
+df1 <- df1 %>% mutate(
+    timep1s = (((timep1 - mean(df$timep1)) / sd(df$timep1)) * sd(df$time)),
+    timep2s = (((timep2 - mean(df$timep2)) / sd(df$timep2)) * sd(df$time^2)),
+    agep1s = (((agep1 - mean(df1$agep1)) / sd(df1$agep1)) * sd(df1$age_75)) + mean(df1$age_75),
+    agep2s = (((agep2 - mean(df1$agep2)) / sd(df1$agep2)) * sd(df1$age_75^2)) + mean(df1$age_75^2)
+)
+
+# summary(df1$agep1)
+# summary(df1$agep1s)
+# summary(df1$age_75)
+# mean(df1$agep1)
+# mean(df1$agep1s)
+# mean(df1$age_75)
+# sd(df1$agep1)
+# sd(df1$agep1s)
+# sd(df1$age_75)
+# mean(df1$agep2)
+# mean(df1$agep2s)
+# mean(df1$age_75^2)
+# sd(df1$agep2)
+# sd(df1$agep2s)
+# sd(df1$age_75^2)
+# cor(df1$agep1s,df1$agep2s)
+
+# mean(df1$timep1)
+# mean(df1$timep1s)
+# mean(df1$time)
+# sd(df1$timep1)
+# sd(df1$timep1s)
+# sd(df1$time)
+# mean(df1$timep2)
+# mean(df1$timep2s)
+# mean(df1$time^2)
+# sd(df1$timep2)
+# sd(df1$timep2s)
+# sd(df1$time^2)
+# cor(df1$timep1s,df1$timep2s)
+
+
+```
+
+## Background
+
+- Simulating cognitive change across the older adult life span
+    - Simulation studies of cognitive trajectories in older adults have potential to expand knowledge about methods for detecting cognitive decline and even for understanding cognitive decline and associated risk and protective factors
+    - Reality based simulation of the variability of cognitive trajectories in the older adult population is a critical element for meaningful simulation studies
+    - Overarching goal of this effort was to demonstrate and evaluate feasability of a specific approach to simulating cognitive trajectories based upon empirical results from a real-world sample
+    
+## Methods
+
+- Sample
+    - Merged longitudinal sample comprised of 4 longitudinal cohort studies with shared longitudinal cognitive assessment protocols
+        - UC Davis Alzheimer' Disease Research Center longitudinal cohort (ADRC)
+        - Kaiser Healthy Aging and Diverse Life Experiences study (KHANDLE)
+        - Kaiser Study of Healthy Aging in African Americans (STAR)
+        - Kaiser Life After 90 Study (LA90)
+        - Sample characteristics
+            - ADRC, KHANDLE, and LA90 are composed of demographically diverse older adults (race/ethnicity, education, age, gender, language), STAR is an African American sample. The merged sample is demographically diverse and representative of community dwelling older aduls in Northern California. 
+            - sub-samples are composed of largely community dwelling older adults recruited to represent the range of cognitive function in the older adult population
+            - there is a diversity of cognitive trajectories in all sub-samples
+                - \>50% cognitively normal, \>40% cognitively impaired (MCI or dementia)
+            - longitudinal assessment protocols in all studies that use the same cognitive assessment instruments
+- Cognitive Assessment
+    - Spanish and English Neuropsychological Assessment Scales (SENAS)
+        - Neuropsychological test battery developed and validated for assessment of cognition in demographically diverse older adults
+            - Emphasis on high measurement precision (information, reliability) across a broad range of ability spanning ~ ± 2 SD in the older adult population
+            - Measures employed in this study account for differential item function across race/ethnic/language groups
+        - Measures used
+            - Verbal episodic memory (primary measure)
+                - Based on a word list learning test utilizing a 15-word list, 5 learning trials, and a delayed free recall trial after distraction
+                - Scored using item response theory methods - trial and delayed recalltrials modeled as ordinal items
+            - Executive function (secondary measure)
+                - composite of category fluency, phonemic/letter fluency, working memory
+                    - category fluency - 60 second trials to name animals, fruits, vegetables
+                    - phonemic/letter fluency - 60 second trials to name words starting with F and L sounds
+                    - working memory - digit span backward (strings of digits repeated backwards), list sorting (lists of animals and/or fruits repeated in ordere of increasing size)
+                - Scored using item response theory methods applied to ordinal items
+- Data Analysis
+    - Mixed effects modeling overview
+        - Mixed effects modeling of longitudinal data
+            - orthogonal polynomial decomposition of time variable to evaluate non-linear time trends
+                - quadratic polynomial model compared with linear
+            - alternate time indices
+                - time in study (+ baseline age)
+                    - separates within-person time in study effects and between-person age at baseline effects
+                - age
+                    - within and between person effects are confounded
+    - Mixed effects modeling details
+        - Mixed effects modeling
+            - Bayesian modeling platform (R brms package)
+                - random effects for person, person-x-time, person-x-time^2
+        - Polynomial decomposition
+            - orthogonal decomposition of time variable using R stats::poly
+            - orthogonal components rescales to original time variable (in years) to facilitate interpretability
+                - orthogonality maintained after rescaling
+    - Simulation of cognitive trajectories overview
+        - Estimated model object from mixed effects analysis of empirical data used to predict outcome based on new data
+    - Simulation of cognitive trajectories details
+        - Step 1 - perform orthogonal polynomial decomposition of time variable in empirical dataset
+            - rescale orthogonal polynomials to years and years^2 metrics
+        - Step 2 - estimate empirical mixed effects model using rescales orthogonal time components 
+        - Step 3 - simulate outcome variable responses using fitted empirical model object
+            - create or identify new dataset with synthetic of empirical data for time and baseline age
+            - use stats::poly() fitted model object to create orthogonal polynomial time components, rescale as for original empirical file
+            - use brms::posterior_predict to simulate outcome responses in new dataset
+            
+        
+                
+               
+## Results                
+                
+### Longitudinal Models
+
+```{r longitudinal_models, echo=FALSE, warning=FALSE,message=FALSE,cache=FALSE,eval=FALSE}
+
+# print("time in study - quadratic versus linear model (negative value for fit1 corresponds to worse fit of linear model\n")
+# fit1 <- add_criterion(fit_vm_poly_pr_age_brms1, c("waic","bayes_R2","loo"))
+# fit2 <- add_criterion(fit_vm_poly_pr_age_brms, c("waic","bayes_R2","loo"))
+# print(loo_compare(fit1, fit2, criterion = "waic"))
+# 
+# print("time in study - quadratic time, quadratic versus linear baseline age model (negative value for fit2 corresponds to worse fit of quadratic baseline age model\n")
+# fit1 <- add_criterion(fit_vm_poly_pr_age_brms, c("waic","bayes_R2","loo"))
+# fit2 <- add_criterion(fit_vm_poly_pr_age_brmspa, c("waic","bayes_R2","loo"))
+# print(loo_compare(fit1, fit2, criterion = "waic"))
+# 
+# print("age - quadratic versus linear model (negative value for fit1 corresponds to worse fit of linear model\n")
+# fit1 <- add_criterion(fit_vm_age_pr_brm_polys1, c("waic","bayes_R2","loo"))
+# fit2 <- add_criterion(fit_vm_age_pr_brm_polys, c("waic","bayes_R2","loo"))
+# print(loo_compare(fit1, fit2, criterion = "waic"))
+
+# ### lmer
+# # lmer - time - 2nd order polynomial
+# fit_vm_poly_pr_age <- lmer(vrmem ~ poly(time,degree=2) + preval1 + preval2 + 
+#     agebl_75 + poly(time,degree=2):agebl_75 + (1 + poly(time,degree=2) | id), data=df)
+# summary(fit_vm_poly_pr_age)
+# 
+# # lmer - time - linear
+# fit_vm_poly_pr_age1 <- lmer(vrmem ~ poly(time,degree=1) + preval1 + preval2 + 
+#     agebl_75 + poly(time,degree=1):agebl_75 + (1 + poly(time,degree=1) | id), data=df)
+# summary(fit_vm_poly_pr_age1)
+# 
+# # lmer - time - 2nd order polynomial rescaled to years 
+# fit_vm_poly_pr_ages <- lmer(vrmem ~ timep1s + timep2s + preval1 + preval2 + 
+#     agebl_75 + timep1s:agebl_75 + timep2s:agebl_75 + (1 + timep1s + timep2s | id), data=df1)
+# summary(fit_vm_poly_pr_ages)
+# 
+# # lmer - age - 2nd order polynomial
+# fit_vm_age_pr_poly <- lmer(vrmem ~ poly(age_75,degree=2) + preval1 + preval2 + 
+#     (1 + poly(age_75,degree=2) | id), data=df1)
+# summary(fit_vm_age_pr_poly)
+# 
+# lmer - age - 2nd order polynomial rescaled to years
+# fit_vm_age_pr_polys <- lmer(vrmem ~ agep1s + agep2s + preval1 + preval2 +
+#     (1 + agep1s + agep2s | id), data=df1)
+# summary(fit_vm_age_pr_polys)
+# fit_vm_age_pr_polys1 <- lmer(vrmem ~ agep1s + preval1 + preval2 +
+#     (1 + agep1s | id), data=df1)
+# summary(fit_vm_age_pr_polys1)
+# anova(fit_vm_age_pr_polys,fit_vm_age_pr_polys1)
+# 
+# 
+# ### brms
+# # # brms - time - 2nd order polynomial
+# # frml <- "vrmem ~ poly(time,degree=2) + preval1 + preval2 + 
+# #     + agebl_75 + poly(time,degree=2):agebl_75 + (1 + poly(time,degree=2) | id)"
+# # fit_vm_poly_pr_age_brm <- brm(frml, data=df, chains = 4, cores = 4)
+# # fit_vm_poly_pr_age_brm
+# # 
+# # # brms - time - 2nd order polynomial rescaled to years 
+# # frml <- "vrmem ~ timep1s + timep2s + preval1 + preval2 +
+# #     agebl_75 + timep1s:agebl_75 + timep2s:agebl_75 + (1 + timep1s + timep2s | id)"
+# # fit_vm_poly_pr_age_brms <- brm(frml, data=df1, chains = 4, cores = 4)
+# print("model fit - time in study modeled as quadratic polynomial")
+# print(fit_vm_poly_pr_age_brms,digits=4)
+
+# # # brms - time - 2nd order polynomial rescaled to years, age baseline 2nd order polynomial
+# # df2 <- df1 %>% filter(!is.na(agebl_75))
+# # frml <- "vrmem ~ timep1s + timep2s + preval1 + preval2 +
+# #     poly(agebl_75,2) + timep1s:poly(agebl_75,2) + timep2s:poly(agebl_75,2) + (1 + timep1s + timep2s | id)"
+# # fit_vm_poly_pr_age_brmspa <- brm(frml, data=df2, chains = 4, cores = 4)
+# print("model fit - time in study modeled as quadratic polynomial, baseline age modeled as quadratic polynomial")
+# print(fit_vm_poly_pr_age_brmspa,digits=4)
+# 
+# # brms - time - 2nd order polynomial rescaled to years, linear component
+# frml <- "vrmem ~ timep1s + preval1 + preval2 + 
+#     agebl_75 + timep1s:agebl_75 + (1 + timep1s | id)"
+# fit_vm_poly_pr_age_brms1 <- brm(frml, data=df1, chains = 4, cores = 4)
+# print(fit_vm_poly_pr_age_brms1,digits=3)
+# 
+# 
+# # brms - time - linear
+# frml1 <- "vrmem ~ poly(time,degree=1) + preval1 + preval2 + 
+#     + agebl_75 + poly(time,degree=1):agebl_75 + (1 + poly(time,degree=1) | id)"
+# fit_vm_poly_pr_age_brm1 <- brm(frml1, data=df, chains = 4, cores = 4)
+# fit_vm_poly_pr_age_brm1
+# 
+# # # brms - age - 2nd order polynomial rescaled to years 
+# # fit_vm_age_pr_brm_polys <- brm(vrmem ~ agep1s + agep2s + preval1 + preval2 +
+# #     (1 + agep1s + agep2s | id), data=df1, chains = 4, cores = 4)
+# print("model fit - age modeled as quadratic polynomial")
+# print(fit_vm_age_pr_brm_polys,digits=4)
+# 
+# # brms - age - 2nd order polynomial rescaled to years, linear component
+# fit_vm_age_pr_brm_polys1 <- brm(vrmem ~ agep1s + preval1 + preval2 + 
+#     (1 + agep1s | id), data=df1, chains = 4, cores = 4)
+# print(fit_vm_age_pr_brm_polys1,digits=4)
+
+
+
+
+### Development code
+# fit1 <- add_criterion(fit_vm_poly_pr_age_brm, "waic")
+# fit2 <- add_criterion(fit_vm_poly_pr_age_brm1, "waic")
+# 
+# # compare both models
+# loo_compare(fit1, fit2, criterion = "waic")
+# 
+# fit1 <- add_criterion(fit_vm_poly_pr_age_brms, c("waic","bayes_R2","loo"))
+# fit2 <- add_criterion(fit_vm_poly_pr_age_brms1, c("waic","bayes_R2","loo"))
+# 
+# fit1$criteria$waic
+# fit2$criteria$waic
+# fit1$criteria$loo
+# fit2$criteria$loo
+# mean(fit1$criteria$bayes_R2)
+# mean(fit2$criteria$bayes_R2)
+# 
+# # compare both models
+# loo_compare(fit1, fit2, criterion = "waic")
+# 
+# fit1 <- add_criterion(fit_vm_age_pr_brm_polys, c("waic","bayes_R2","loo"))
+# fit2 <- add_criterion(fit_vm_age_pr_brm_polys1, c("waic","bayes_R2","loo"))
+# loo_compare(fit1, fit2, criterion = "waic")
+# 
+# bayes_R2(fit_vm_age_pr_brm_polys)
+# bayes_R2(fit_vm_age_pr_brm_polys1)
+# 
+# 
+# bayes_R2(fit_vm_poly_pr_age_brm)
+# bayes_R2(fit_vm_poly_pr_age_brm1)
+# 
+# bayes_R2(fit_vm_poly_pr_age_brms)
+# bayes_R2(fit_vm_poly_pr_age_brms1)
+# 
+# 
+# mean(df$timep1)
+# mean(df$timep2)
+# sd(df$timep1)
+# sd(df$timep2)
+# mean(df$timec)
+# mean(df$timesq)
+# sd(df$timec)
+# sd(df$timesq)
+# mean(df$time)
+# mean(df$time^2)
+# sd(df$time)
+# sd(df$time^2)
+# 
+# cor(df[,c("timep1","timep2")])
+# 
+# df1 <- df %>% mutate(
+#     timep1s = (((timep1 - mean(df$timep1)) / sd(df$timep1)) * sd(df$time)) + mean(df$time) ,
+#     timep2s = (((timep2 - mean(df$timep2)) / sd(df$timep2)) * sd(df$time^2)) + mean(df$time^2)
+# )
+# df1 <- df %>% mutate(
+#     timep1s = (((timep1 - mean(df$timep1)) / sd(df$timep1)) * sd(df$time)),
+#     timep2s = (((timep2 - mean(df$timep2)) / sd(df$timep2)) * sd(df$time^2))
+# )
+# df1 <- df %>% mutate(
+#     timep1s = (((timep1 - mean(df$timep1)) / sd(df$timep1))),
+#     timep2s = (((timep2 - mean(df$timep2)) / sd(df$timep2)))
+# )
+# mean(df1$timep1s)
+# mean(df1$timep2s)
+# sd(df1$timep1s)
+# sd(df1$timep2s)
+# cor(df1[,c("timep1s","timep2s")])
+
+```
+
+
+#### Quadratic versus linear model comparison
+
+```{r longitudinal_model_comp, echo=FALSE, warning=FALSE,message=FALSE,cache=TRUE, include = FALSE}
+
+# print("time in study - quadratic versus linear model (negative value for fit1 corresponds to worse fit of linear model\n")
+fit1 <- add_criterion(fit_vm_poly_pr_age_brms1, c("waic","bayes_R2","loo"))
+fit2 <- add_criterion(fit_vm_poly_pr_age_brms, c("waic","bayes_R2","loo"))
+mod_comp_timelq <- loo_compare(fit1, fit2, criterion = "waic")
+
+# print("time in study - quadratic time, quadratic versus linear baseline age model (negative value for fit2 corresponds to worse fit of quadratic baseline age model\n")
+fit1 <- add_criterion(fit_vm_poly_pr_age_brms, c("waic","bayes_R2","loo"))
+fit2 <- add_criterion(fit_vm_poly_pr_age_brmspa, c("waic","bayes_R2","loo"))
+mod_comp_timeq_agelq <- loo_compare(fit1, fit2, criterion = "waic")
+
+# print("age - quadratic versus linear model (negative value for fit1 corresponds to worse fit of linear model\n")
+fit1 <- add_criterion(fit_vm_age_pr_brm_polys1, c("waic","bayes_R2","loo"))
+fit2 <- add_criterion(fit_vm_age_pr_brm_polys, c("waic","bayes_R2","loo"))
+mod_comp_agelq <- loo_compare(fit1, fit2, criterion = "waic")
+
+```
+
+Time in study - quadratic versus linear time (negative value for fit1 corresponds to worse fit of linear model)
+
+```{r mod_comp_timelq, echo=FALSE, warning=FALSE,message=FALSE}
+
+print(mod_comp_timelq)
+
+```
+
+Time in study - quadratic time, quadratic versus linear baseline age (negative value for fit2 corresponds to worse fit of quadratic baseline age model)
+
+```{r mod_comp_timeq_agelq, echo=FALSE, warning=FALSE,message=FALSE}
+
+print(mod_comp_timeq_agelq)
+
+```
+
+Age - quadratic versus linear model (negative value for fit1 corresponds to worse fit of linear model)
+
+```{r mod_comp_agelq, echo=FALSE, warning=FALSE,message=FALSE}
+
+print(mod_comp_agelq)
+
+```
+
+
+#### Estimated models
+
+Time in study modeled as quadratic polynomial
+
+```{r mod_timeq, echo=FALSE, warning=FALSE,message=FALSE}
+
+# print("model fit - time in study modeled as quadratic polynomial")
+print(fit_vm_poly_pr_age_brms,digits=4)
+
+```
+
+Time in study modeled as quadratic polynomial, baseline age modeled as quadratic polynomial
+
+```{r mod_timeq_ageq, echo=FALSE, warning=FALSE,message=FALSE}
+
+# print("model fit - time in study modeled as quadratic polynomial, baseline age modeled as quadratic polynomial")
+print(fit_vm_poly_pr_age_brmspa,digits=4)
+
+
+```
+
+Age modeled as quadratic polynomial
+
+```{r mod_ageq, echo=FALSE, warning=FALSE,message=FALSE}
+
+# print("model fit - age modeled as quadratic polynomial")
+print(fit_vm_age_pr_brm_polys,digits=4)
+
+```
+
+
+
+### Model Predicted Trajectories (200 randomly selected persons)
+
+- Methods summary
+    - Fitted model objects used to generated model predicted outcomes
+        - each predicted outcome was mean of 4000 draws from the posterior distribution
+    - Model predicted outcome trajectories graphed as a function of age
+        - Loess smoothing of overall average across age span
+    - 200 individual ids randomly selected for presentation purposes
+
+<!--
+Linear Mixed Effects Model (lmer)
+-->
+
+<!--
+```{r traj_lmer,echo=FALSE,warning=FALSE,message=FALSE}
+
+# df4 <- cbind(df,predict(fit_vm_poly_pr_age, newdata=df, allow.new.levels=TRUE))
+# names(df4)[ncol(df4)] <- "vm_pred"
+# 
+# set.seed(08222024)
+# rids <- sample(unique(df4[df4$nwave > 3,"id"]),size = 200, replace = FALSE)
+# df5 <- df4 %>%  filter(id %in% rids)
+# 
+# 
+# ggplot(df5, aes(x = age, y = vm_pred)) + 
+#      geom_line(aes(group=id, color=id), show.legend = FALSE) + 
+#     geom_smooth(linetype=1,linewidth=1.5,show.legend = FALSE)  +
+#     # scale_x_continuous(name = "Time from Baseline (Years)", limits = c(0,10)) + 
+#     scale_x_continuous(name = "Age (Years)", limits = c(60,100)) + 
+#     scale_y_continuous(name = "Cognitive Score",limits=c(-3,3))
+# 
+# df4 <- cbind(df1,predict(fit_vm_age_pr_polys, newdata=df1, allow.new.levels=TRUE))
+# names(df4)[ncol(df4)] <- "vm_pred"
+# 
+# set.seed(08222024)
+# rids <- sample(unique(df4[df4$nwave > 3,"id"]),size = 200, replace = FALSE)
+# df5 <- df4 %>%  filter(id %in% rids)
+# 
+# 
+# ggplot(df5, aes(x = age, y = vm_pred)) + 
+#      geom_line(aes(group=id, color=id), show.legend = FALSE) + 
+#     geom_smooth(linetype=1,linewidth=1.5,show.legend = FALSE)  +
+#     # scale_x_continuous(name = "Time from Baseline (Years)", limits = c(0,10)) + 
+#     scale_x_continuous(name = "Age (Years)", limits = c(60,100)) + 
+#     scale_y_continuous(name = "Cognitive Score",limits=c(-3,3))
+
+
+```
+
+-->
+
+Time in study (quadratic) + baseline age - Bayesian quadratic mixed effects model (brms)
+
+```{r traj_brms_time,echo=FALSE,warning=FALSE,message=FALSE}
+
+# polynomial not rescaled
+pp <- posterior_predict(fit_vm_poly_pr_age_brms)
+
+pp <- data.frame(t(pp))
+# names(pp) <- paste0("p",1:4000)
+pp$vm_pred <- apply(pp,1,function(x) mean(x))
+
+df4 <- fit_vm_poly_pr_age_brms$data
+df4[,"vm_pred"] <- pp$vm_pred
+rm(pp)
+
+df4 <- df4 %>% left_join((df1 %>% dplyr::select(id,timep1s,time,wave,nwave,age)),by=c("id","timep1s"))
+
+set.seed(08222024)
+rids <- sample(unique(df4[df4$nwave >= 3,"id"]),size = 200, replace = FALSE)
+df5 <- df4 %>%  filter(id %in% rids)
+
+
+ggplot(df5, aes(x = age, y = vm_pred)) + 
+     geom_line(aes(group=id, color=id), show.legend = FALSE) + 
+    geom_smooth(linetype=1,linewidth=1.5,show.legend = FALSE)  +
+    # scale_x_continuous(name = "Time from Baseline (Years)", limits = c(0,10)) + 
+    scale_x_continuous(name = "Age (Years)", limits = c(60,100)) + 
+    scale_y_continuous(name = "Cognitive Score",limits=c(-3,3))
+
+```
+
+Time in study (quadratic) + baseline age (quadratic) - Bayesian quadratic mixed effects model (brms)
+
+```{r traj_brms_time2,echo=FALSE,warning=FALSE,message=FALSE}
+
+# polynomial not rescaled
+pp <- posterior_predict(fit_vm_poly_pr_age_brmspa)
+
+pp <- data.frame(t(pp))
+# names(pp) <- paste0("p",1:4000)
+pp$vm_pred <- apply(pp,1,function(x) mean(x))
+
+df4 <- fit_vm_poly_pr_age_brmspa$data
+df4[,"vm_pred"] <- pp$vm_pred
+rm(pp)
+
+df4 <- df4 %>% left_join((df1 %>% dplyr::select(id,timep1s,time,wave,nwave,age)),by=c("id","timep1s"))
+
+# set.seed(08222024)
+# rids <- sample(unique(df4[df4$nwave >= 3,"id"]),size = 200, replace = FALSE)
+df5 <- df4 %>%  filter(id %in% rids)
+
+
+ggplot(df5, aes(x = age, y = vm_pred)) + 
+     geom_line(aes(group=id, color=id), show.legend = FALSE) + 
+    geom_smooth(linetype=1,linewidth=1.5,show.legend = FALSE)  +
+    # scale_x_continuous(name = "Time from Baseline (Years)", limits = c(0,10)) + 
+    scale_x_continuous(name = "Age (Years)", limits = c(60,100)) + 
+    scale_y_continuous(name = "Cognitive Score",limits=c(-3,3))
+
+```
+
+Age (quadratic) - Bayesian quadratic mixed effects model (brms)
+
+```{r traj_brms_age,echo=FALSE,warning=FALSE,message=FALSE}
+
+# polynomial not rescaled
+# pp <- posterior_predict(fit_vm_poly_pr_age_brm)
+# 
+# pp <- data.frame(t(pp))
+# # names(pp) <- paste0("p",1:4000)
+# pp$vm_pred <- apply(pp,1,function(x) mean(x))
+# 
+# df4 <- fit_vm_poly_pr_age_brm$data
+# df4[,"vm_pred"] <- pp$vm_pred
+# rm(pp)
+# 
+# df4 <- df4 %>% left_join((df %>% dplyr::select(id,time,age)),by=c("id","time"))
+# 
+# df5 <- df4 %>%  filter(id %in% rids)
+# 
+# 
+# ggplot(df5, aes(x = age, y = vm_pred)) + 
+#      geom_line(aes(group=id, color=id), show.legend = FALSE) + 
+#     geom_smooth(linetype=1,linewidth=1.5,show.legend = FALSE)  +
+#     # scale_x_continuous(name = "Time from Baseline (Years)", limits = c(0,10)) + 
+#     scale_x_continuous(name = "Age (Years)", limits = c(60,100)) + 
+#     scale_y_continuous(name = "Cognitive Score",limits=c(-3,3))
+
+
+
+pp <- posterior_predict(fit_vm_age_pr_brm_polys)
+
+pp <- data.frame(t(pp))
+pp$vm_pred <- apply(pp,1,function(x) mean(x))
+
+df4 <- fit_vm_age_pr_brm_polys$data
+df4[,"vm_pred"] <- pp$vm_pred
+rm(pp)
+
+df4 <- df4 %>% mutate(age = agep1s + 75)
+# summary(df4$age)
+# summary(df1$age)
+
+# df4 <- df4 %>% left_join((df1 %>% dplyr::select(id,agep1s,age_75)),by=c("id","agep1s"))
+
+# set.seed(08222024)
+# rids <- sample(unique(df4[,"id"]),size = 200, replace = FALSE)
+df5 <- df4 %>%  filter(id %in% rids)
+
+
+ggplot(df5, aes(x = age, y = vm_pred)) + 
+     geom_line(aes(group=id, color=id), show.legend = FALSE) + 
+    geom_smooth(linetype=1,linewidth=1.5,show.legend = FALSE)  +
+    # scale_x_continuous(name = "Time from Baseline (Years)", limits = c(0,10)) + 
+    scale_x_continuous(name = "Age (Years)", limits = c(60,100)) + 
+    scale_y_continuous(name = "Cognitive Score",limits=c(-3,3))
+
+
+```
+
+
+### Simulated Cognitive Trajectory Dataset Based on Empirical Model Results
+
+- Goal was to show how empirical longitudinal model results could be used generate "true" longitudinal cognitive trajectories for input into simulations
+- Methods
+    - Used verbal episodic memory regressed on time in study (quadratic) and age at baseline as empirical base for simulation
+        - vrmem ~ timep1s + timep2s + agebl_75 + timep1s:agebl_75 + timep2s:agebl75 + 
+            preval1 + preval2 + (1 + timep1s + timep2s | id)
+    - Created synthetic dataset containing independent variables(timep1s, timep2s, agebl_75) 
+        - Baseline age was uniformally distributed from 60-95 years
+        - There was a baseline assessment plus 10 annual followups for each person
+        - 792 records - 36 baseline ages * 2 replications * 11 assessments
+        - two practice effect indicators defined
+            - preval1 - 0 if 1 assessment, 1 if 2+
+            - preval2 - 0 if 1 or 2 assessments, 1 if 3+
+        - used stats::poly() model fit object from empirical model to generate orthogonal polynomial time components corresponding to time in study values in synthetic data
+            - rescaled orthogonal components to year and years^2 metrics
+        - used brms::posterior_predict() to generate 4000 simulated vrmem outcome variables in synthetic dataset
+
+
+
+```{r longitudinal_models_sim,echo=TRUE, warning=FALSE,message=FALSE,cache=FALSE}
+
+#   ********************** Create synthetic dataset ****************************
+time <- as.numeric(rep(0:10,792))
+preval1 <- as.numeric(rep(c(0,1,1,1,1,1,1,1,1,1,1),792))
+preval2 <- as.numeric(rep(c(0,0,1,1,1,1,1,1,1,1,1),792))
+
+for (i in 1:2) {
+    for (j in 60:95) {
+        if (i == 1 & j == 60){
+            agebl <- rep(60,11)
+        } else {
+            agebl <- c(agebl,rep(j,11)) 
+        }
+    }
+}
+
+s4 <- data.frame(cbind(time,preval1,preval2,agebl))
+s4$vrmem <- NA
+
+for (i in 1:792){
+    for (j in 1:11){
+        s4[(i-1)*11 + j,"id"] <- i
+    }
+}
+
+s4 <- s4 %>% mutate(
+    agebl_75 = agebl - 75,
+    age = agebl + time
+)
+
+### polynomial decomposition of systhetic data time variable
+#   poly is model object for time orthogonal polynomial decomposition in 
+#    empirical dataset (df1)
+poly <- poly(df1$time,degree=2)
+# apply poly to s4 dataset to generate linear (timep1) and quadratic (timep2) components
+s4 <- s4 %>% bind_cols(predict(poly,s4$time)) %>% rename(timep1 = `1`,timep2 = `2`)
+# rescale timep1 and timep1 to have standard deviations corresponding to those
+#   of the empirical time metric
+s4 <- s4 %>% mutate(
+    timep1s = (((timep1 - mean(df$timep1)) / sd(df$timep1)) * sd(df1$time)),
+    timep2s = (((timep2 - mean(df$timep2)) / sd(df$timep2)) * sd(df1$time^2))
+)
+rm(poly)
+### end polynomial decomposition of synthetic dataset
+
+### generate simulated vrmem outcomes corresponding to synthetic data 
+#   fit_vm_poly_pr_age_brms is empirical model object
+#   simulated outcome is taken from posterior probability draws from the Bayesian model
+#   sample_new_levels = "old_levels" randomly samples random effects values from empirical model
+pp2 <- posterior_predict(fit_vm_poly_pr_age_brms, newdata = s4, 
+    allow_new_levels = TRUE, sample_new_levels = "old_levels")
+pp2 <- data.frame(t(pp2))
+names(pp2) <- paste0("vm",1:4000)
+pp2$vm_pred <- apply(pp2,1,function(x) mean(x))
+#  pp2 is dataframe with 4000 simulated vrmem variables (vm1-vm4000) and the mean of
+#   the 4000 simulations (vm_pred)
+
+s4 <- s4 %>% bind_cols(pp2)
+rm(pp2)
+### end generate simulated vrmem outcomes
+
+saveRDS(s4,file="~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/simulated_longitudinal_true_cognition.rds")
+write.csv(s4,file="~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/simulated_longitudinal_true_cognition.csv",
+    row.names=FALSE)
+
+# ---------------------------- End synthetic dataset ---------------------------
+```
+
+Empirical model formula applied to simulated dataset for 1 simulated outcome (vm15)
+
+```{r longitudinal_models_sim_2,echo=TRUE, warning=FALSE,message=FALSE,cache=FALSE}
+# summary(s4$vm_pred)
+
+# fit_vm_poly_pr_age_sim <- lmer(vm_pred ~ poly(time,degree=2) + preval1 + preval2 +
+#     agebl_75 + poly(time,degree=2):agebl_75 + (1 + poly(time,degree=2) | id), data=s4)
+# fit_vm_poly_pr_age_sim_15 <- lmer(vm15 ~ timep1s + timep2s + preval1 + preval2 +
+#     agebl_75 + timep1s:agebl_75 + timep2s:agebl_75 + (1 + timep1s + timep2s | id), data=s4)
+# summary(fit_vm_poly_pr_age_sim_15)
+# 
+
+# frml <- "vm_pred ~ timep1s + timep2s + preval1 + preval2 + 
+#     agebl_75 + timep1s:agebl_75 + timep2s:agebl_75 + (1 + timep1s + timep2s | id)"
+# fit_vm_poly_pr_age_sim_brms_avg <- brm(frml, data=s4, chains = 4, cores = 4)
+# print(fit_vm_poly_pr_age_sim_brms_avg,digits=4)
+# # print(fit_vm_poly_pr_age_brms,digits=4)
+
+### This model applies the model formula from the empirical model to the simulated dataset
+#       for one arbitrarily chosen simulated outcome (vm15) 
+#       (model run in advance and model object saved)
+# frml <- "vm15 ~ timep1s + timep2s + preval1 + preval2 + 
+#     agebl_75 + timep1s:agebl_75 + timep2s:agebl_75 + (1 + timep1s + timep2s | id)"
+# fit_vm_poly_pr_age_sim_brms_15 <- brm(frml, data=s4, chains = 4, cores = 4)
+print(fit_vm_poly_pr_age_sim_brms_15,digits=4)
+
+### This model applies the model formula from the empirical model to mean
+#       of the 4000 simulations. Note that estimated erro variance becomes very small
+# frml <- "vm_pred ~ poly(time,degree=2) + preval1 + preval2 + 
+#     + agebl_75 + poly(time,degree=2):agebl_75 + (1 + poly(time,degree=2) | id)"
+# fit_vm_poly_pr_age_sim_brm <- brm(frml, data=s4, chains = 4, cores = 4)
+# fit_vm_poly_pr_age_sim_brm
+
+
+
+```
+
+
+### Model Predicted Trajectories - Simulated Data (200 randomly selected persons)
+
+The overall trend line plots the mean of simulated cognitive trajectories against age. 
+
+```{r traj_lmer_sim,echo=FALSE,warning=FALSE,message=FALSE}
+
+set.seed(08222024)
+rids <- sample(unique(s4$id),size = 200, replace = FALSE)
+s5 <- s4 %>%  filter(id %in% rids)
+
+# vm_pred - mean of 4000 simulations
+ggplot(s5, aes(x = age, y = vm_pred)) + 
+     geom_line(aes(group=id, color=id), show.legend = FALSE) + 
+    geom_smooth(linetype=1,linewidth=1.5,show.legend = FALSE)  +
+    # scale_x_continuous(name = "Time from Baseline (Years)", limits = c(0,10)) + 
+    scale_x_continuous(name = "Age (Years)", limits = c(60,100)) + 
+    scale_y_continuous(name = "Cognitive Score",limits=c(-3,3))
+
+# # vm15 - single simulation
+# ggplot(s5, aes(x = age, y = vm15)) + 
+#      geom_line(aes(group=id, color=id), show.legend = FALSE) + 
+#     geom_smooth(linetype=1,linewidth=1.5,show.legend = FALSE)  +
+#     # scale_x_continuous(name = "Time from Baseline (Years)", limits = c(0,10)) + 
+#     scale_x_continuous(name = "Age (Years)", limits = c(60,100)) + 
+#     scale_y_continuous(name = "Cognitive Score",limits=c(-3,3))
+
+
+
+
+```
+
+## Wrap-up
+
+- This shows one method for generating simulated true cognitive trajectories based on real world empirical data
+    - Results show that the the original empirical model can be reasonably reproduced in a fully synthetic dataset
+    - Simulated cognitive trajectories show pattern of variability similar to what was observed in empirical data
+    - The simulated dataset is based on 2 primary parameters - baseline age and time in study
+        - Age and time values chosen for this synthetic dataset were arbitrary, different distributions of age and time could be created
+- Next steps
+    - Use the simulated "true" cognitive values from this methods to generate simulated observed cognitive responses using simulate_fscores() (with some modifications)
+
+
+
+

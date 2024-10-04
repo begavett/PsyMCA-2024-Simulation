@@ -1,0 +1,852 @@
+---
+title: "HRS HCAP Co-Calibration"
+author: "Dan Mungas"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: TRUE
+    toc_depth: 3
+    toc_float: TRUE
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(tidyverse)
+require(mirt)
+require(pander)
+require(lme4)
+require(ggplot2)
+
+
+source("~/Research/Code/missCode.R")
+source("~/Research/Code/Recode/recode.R")
+source("~/Research/Code/runMplus.R")
+source("~/Research/Code/parseMplusObject.R")
+
+```
+
+## Data
+
+
+```{r data,echo=TRUE,eval = FALSE}
+
+# ********************************** Data **************************************
+
+
+hcog <- read.csv("~/Psychometrics Conference/2024/Simulation WG/Data/HRS_Merge3.csv")
+names(hcog) <- tolower(names(hcog))
+
+
+# MMSE
+
+hcog <- hcog %>% mutate(
+    ornttime_mmse = r1orient_time,
+    orntplace_mmse = r1orient_place,
+    imrec_mmse = r1imrc3,
+    delrec_mmse = r1dlrc3,
+    spellbck_mmse = backspel,
+    naming_mmse = r1object,
+    phrase_mmse = case_when(
+        !is.na(r1repeat) ~ case_when(
+            r1repeat == 1 ~ 1,
+            r1repeat == 5 ~ 0
+        )
+    ),
+    commfoll_mmse = case_when(
+        !is.na(r1combfol) ~ case_when(
+            r1combfol %in% c(1,2) ~ 1,
+            r1combfol == 5 ~ 0
+        )
+    ),
+    writesent_mmse = case_when(
+        !is.na(r1senten) ~ case_when(
+            r1senten %in% c(1,2) ~ 1,
+            r1senten == 5 ~ 0
+        )
+    ),
+    draw_mmse = case_when(
+        !is.na(r1draw) ~ case_when(
+            r1draw == 1 ~ 1,
+            r1draw == 5 ~ 0
+        )
+    ),
+    comm3step_mmse = follow3_step,
+    mmsetot_mmse = r1mmse_score
+)
+
+# HRS TICS
+
+hcog <- hcog %>% mutate(
+    wlimrc_tics = pd174,
+    wldlrc_tics = pd184,
+    cntbck_tics = pd129,
+    count_tics = pd170,
+    animfl_tics = pd196,
+    numser_tics = pd216,
+    serial7_tics = ser7sum,
+    ornttime_tics = case_when(
+        !is.na(pd151) ~ case_when(
+            pd151 == 1 ~ 1,
+            pd151 == 5 ~ 0
+        )
+    ) +
+        case_when(
+            !is.na(pd152) ~ case_when(
+                pd152 == 1 ~ 1,
+                pd152 == 5 ~ 0
+            )
+        ) +
+        case_when(
+            !is.na(pd153) ~ case_when(
+                pd153 == 1 ~ 1,
+                pd153 == 5 ~ 0
+            )
+        ) +
+        case_when(
+            !is.na(pd154) ~ case_when(
+                pd154 == 1 ~ 1,
+                pd154 == 5 ~ 0
+            )
+        ),
+    naming_tics = 
+        case_when(
+            !is.na(pd155) ~ case_when(
+                pd155 == 1 ~ 1,
+                pd155 == 5 ~ 0
+            )
+        ) +
+        case_when(
+            !is.na(pd156) ~ case_when(
+                pd156 == 1 ~ 1,
+                pd156 == 5 ~ 0
+            )
+        ) +
+        case_when(
+            !is.na(pd157) ~ case_when(
+                pd157 == 1 ~ 1,
+                pd157 == 5 ~ 0
+            )
+        ) +
+        case_when(
+            !is.na(pd158) ~ case_when(
+                pd158 == 1 ~ 1,
+                pd158 == 5 ~ 0
+            )
+        )
+)
+
+# HCAP
+
+hcog <- hcog %>% mutate(
+    naming_hcap = 
+        case_when(
+            !is.na(r1scis) ~ case_when(
+                r1scis == 1 ~ 1,
+                r1scis == 5 ~ 0
+            )
+        ) +
+        case_when(
+            !is.na(r1cactus) ~ case_when(
+                r1cactus == 1 ~ 1,
+                r1cactus == 5 ~ 0
+            )
+        ) +
+        case_when(
+            !is.na(r1pres) ~ case_when(
+                r1pres == 1 ~ 1,
+                r1pres == 5 ~ 0
+            )
+        ) +
+        case_when(
+            !is.na(r1elbow) ~ case_when(
+                r1elbow == 1 ~ 1,
+                r1elbow == 5 ~ 0
+            )
+        ) +
+        case_when(
+            !is.na(r1hammer) ~ case_when(
+                r1hammer == 1 ~ 1,
+                r1hammer == 5 ~ 0
+            )
+        ),
+    ceradtot_hcap = r1word_total,
+    ceraddel_hcap = r1word_dscore,
+    ceradrcg_hcap = r1wlrec_totscore,
+    animfl_hcap = r1verbal_score,
+    bmim_hcap = r1bm_immscore,
+    bmdel_hcap = r1bm_delscore,
+    lmim_hcap = r1lmb_immscore,
+    lmdel_hcap = r1lmb_delscore,
+    lmrcg_hcap = r1lmb_recoscore,
+    conprxim_hcap = r1cp_score,
+    conprxdel_hcap = r1cpdel_score,
+    dsmt_hcap = r1dig_score,
+    numser_hcap = r1ns_score,
+    ravens_hcap = r1rv_score,
+    trailsa_hcap = r1tma_score,
+    trailsb_hcap = r1tmb_score,
+    spatial_hcap =
+        case_when(
+            !is.na(r1store) ~ case_when(
+                r1store == 1 ~ 1,
+                r1store == 5 ~ 0
+            )
+        ) +
+        case_when(
+            !is.na(r1point) ~ case_when(
+                r1point == 1 ~ 1,
+                r1point == 5 ~ 0
+            )
+        )
+)
+
+mmse_nms <- c("ornttime_mmse","orntplace_mmse","imrec_mmse","delrec_mmse",
+    "spellbck_mmse","naming_mmse","phrase_mmse","commfoll_mmse","writesent_mmse",
+    "draw_mmse","comm3step_mmse")
+
+tics_nms <- c("wlimrc_tics","wldlrc_tics","count_tics","animfl_tics",
+    "numser_tics","serial7_tics","ornttime_tics","naming_tics")
+# "cntbck_tics" not used due to very few non-missing values
+
+hcap_nms <- c("naming_hcap","ceradtot_hcap","ceraddel_hcap","ceradrcg_hcap",
+    "animfl_hcap","bmim_hcap","bmdel_hcap","lmim_hcap","lmdel_hcap","lmrcg_hcap",
+    "conprxim_hcap","conprxdel_hcap","dsmt_hcap","numser_hcap","ravens_hcap",
+    "trailsa_hcap","trailsb_hcap","spatial_hcap")
+
+### Recode MMSE
+
+# summary(hcog[,mmse_nms])
+
+hcog$imrec_mmse <- missCode(hcog,"imrec_mmse",0,3)
+hcog$delrec_mmse <- missCode(hcog,"delrec_mmse",0,3)
+
+# table(hcog$ornttime_mmse)
+# table(hcog$orntplace_mmse)
+# table(hcog$imrec_mmse)
+# table(hcog$delrec_mmse)
+# table(hcog$spellbck_mmse)
+# table(hcog$naming_mmse)
+# table(hcog$phrase_mmse)
+# table(hcog$commfoll_mmse)
+# table(hcog$writesent_mmse)
+# table(hcog$draw_mmse)
+# table(hcog$comm3step_mmse)
+
+hcog <- hcog %>% mutate(
+    ornttime_mmser = ornttime_mmse,
+    orntplace_mmser = orntplace_mmse,
+    imrec_mmser = case_when(
+        imrec_mmse %in% c(0,1) ~ 0,
+        TRUE ~ imrec_mmse - 1
+    ),
+    delrec_mmser = delrec_mmse,
+    spellbck_mmser = spellbck_mmse,
+    naming_mmser = naming_mmse,
+    phrase_mmser = phrase_mmse,
+    commfoll_mmser = commfoll_mmse,
+    writesent_mmser = writesent_mmse,
+    draw_mmser = draw_mmse,
+    comm3step_mmser = comm3step_mmse
+)
+
+# table(hcog$imrec_mmse,hcog$imrec_mmser)
+
+### End recode MMSE
+
+### Recode TICS
+
+# summary(hcog[,tics_nms])
+# 
+# table(hcog$wlimrc_tics)
+# table(hcog$wldlrc_tics)
+# table(hcog$cntbck_tics)
+# table(hcog$count_tics)
+# table(hcog$animfl_tics)
+# table(hcog$numser_tics)
+# table(hcog$serial7_tics)
+# table(hcog$ornttime_tics)
+# table(hcog$naming_tics)
+
+hcog <- hcog %>% mutate(
+    wlimrc_ticsr = case_when(
+        wlimrc_tics %in% c(9,10) ~ 9,
+        TRUE ~ wlimrc_tics
+    ),
+    wldlrc_ticsr = case_when(
+        wldlrc_tics %in% c(9,10) ~ 9,
+        TRUE ~ wldlrc_tics
+    ),
+    count_ticsr = case_when(
+        count_tics %in% c(0,1,2) ~ 0,
+        TRUE ~ count_tics - 2
+    ),
+    ornttime_ticsr = case_when(
+        ornttime_tics %in% c(0,1) ~ 0,
+        TRUE ~ ornttime_tics - 1
+    ),
+    naming_ticsr = case_when(
+        naming_tics %in% c(0,1,2) ~ 0,
+        TRUE ~ naming_tics - 2
+    ),
+    numser_ticsr = numser_tics,
+    serial7_ticsr = serial7_tics
+)
+
+# table(hcog$wlimrc_tics,hcog$wlimrc_ticsr)
+# table(hcog$wldlrc_tics,hcog$wldlrc_ticsr)
+# table(hcog$count_tics,hcog$count_ticsr)
+# table(hcog$ornttime_tics,hcog$ornttime_ticsr)
+# table(hcog$naming_tics,hcog$naming_ticsr)
+
+hcog <- recodeOrdinal(df = hcog, varlist_orig = "animfl_tics", varlist_tr = "animfl_ticsr")
+
+# table(hcog$animfl_tics,hcog$animfl_ticsr)
+
+### End recode TICS
+
+
+### Recode HCAP
+
+# summary(hcog[,hcap_nms])
+
+hcog$trailsa_hcap <- missCode(hcog,"trailsa_hcap",0,300)
+hcog$trailsb_hcap <- missCode(hcog,"trailsb_hcap",0,300)
+
+hcog$trailsa_hcapi <- -hcog$trailsa_hcap
+hcog$trailsb_hcapi <- -hcog$trailsb_hcap
+
+# summary(hcog[,c("trailsa_hcapi","trailsb_hcapi")])
+# 
+# table(hcog$naming_hcap)
+# table(hcog$ceradtot_hcap)
+# table(hcog$ceraddel_hcap)
+# table(hcog$ceradrcg_hcap)
+# table(hcog$animfl_hcap)
+# table(hcog$bmim_hcap)
+# table(hcog$bmdel_hcap)
+# table(hcog$lmim_hcap)
+# table(hcog$lmdel_hcap)
+# table(hcog$lmrcg_hcap)
+# table(hcog$conprxim_hcap)
+# table(hcog$conprxdel_hcap)
+# table(hcog$dsmt_hcap)
+# table(hcog$numser_hcap)
+# table(hcog$ravens_hcap)
+# table(hcog$trailsa_hcap)
+# table(hcog$trailsb_hcap)
+# table(hcog$spatial_hcap)
+
+hcog <- hcog %>% mutate(
+    naming_hcapr = case_when(
+        naming_hcap %in% c(0,1,2,3) ~ 1,
+        TRUE ~ naming_hcap - 2
+    ),
+    spatial_hcapr = spatial_hcap + 1
+)
+
+varlist_orig <- c("ceradtot_hcap","ceraddel_hcap","ceradrcg_hcap",
+    "animfl_hcap","bmim_hcap","bmdel_hcap","lmim_hcap","lmdel_hcap","lmrcg_hcap",
+    "conprxim_hcap","conprxdel_hcap","dsmt_hcap","numser_hcap","ravens_hcap",
+    "trailsa_hcapi","trailsb_hcapi")
+
+varlist_tr <- paste0(varlist_orig,"r")
+
+hcog <- recodeOrdinal(hcog, varlist_orig = varlist_orig, varlist_tr = varlist_tr)
+
+# table(hcog$naming_hcapr)
+# table(hcog$ceradtot_hcapr)
+# table(hcog$ceraddel_hcapr)
+# table(hcog$ceradrcg_hcapr)
+# table(hcog$animfl_hcapr)
+# table(hcog$bmim_hcapr)
+# table(hcog$bmdel_hcapr)
+# table(hcog$lmim_hcapr)
+# table(hcog$lmdel_hcapr)
+# table(hcog$lmrcg_hcapr)
+# table(hcog$conprxim_hcapr)
+# table(hcog$conprxdel_hcapr)
+# table(hcog$dsmt_hcapr)
+# table(hcog$numser_hcapr)
+# table(hcog$ravens_hcapr)
+# table(hcog$trailsa_hcapir)
+# table(hcog$trailsb_hcapir)
+# table(hcog$spatial_hcapr)
+
+
+### End recode HCAP
+
+saveRDS(hcog, file = "~/Psychometrics Conference/2024/Simulation WG/Data/hrs_hcap_co_calibration_analytic.rds")
+write.csv(hcog, file = "~/Psychometrics Conference/2024/Simulation WG/Data/hrs_hcap_co_calibration_analytic.csv", row.names=FALSE)
+
+
+#   --------------------------------- End Data --------------------------------
+
+```
+
+## Multidimensional Item Response Theory Models
+
+```{r mirt_models,echo = TRUE, eval = FALSE}
+
+#   ******************************* mirt models ********************************
+
+hcog <- readRDS("~/Psychometrics Conference/2024/Simulation WG/Data/hrs_hcap_co_calibration_analytic.rds")
+
+### Item names for analysis
+
+mmse_nmsr <- c("ornttime_mmser","orntplace_mmser","imrec_mmser","delrec_mmser",
+               "spellbck_mmser","naming_mmser","phrase_mmser","commfoll_mmser","writesent_mmser",
+               "draw_mmser","comm3step_mmser")
+
+tics_nmsr <- c("wlimrc_ticsr","wldlrc_ticsr","count_ticsr","animfl_ticsr",
+               "numser_ticsr","serial7_ticsr","ornttime_ticsr","naming_ticsr")
+
+hcap_nmsr <- c("naming_hcapr","ceradtot_hcapr","ceraddel_hcapr","ceradrcg_hcapr",
+               "animfl_hcapr","bmim_hcapr","bmdel_hcapr","lmim_hcapr","lmdel_hcapr","lmrcg_hcapr",
+               "conprxim_hcapr","conprxdel_hcapr","dsmt_hcapr","numser_hcapr","ravens_hcapr",
+               "trailsa_hcapir","trailsb_hcapir","spatial_hcapr")
+
+hcog1 <- hcog[,c(mmse_nmsr,tics_nmsr,hcap_nmsr)]
+
+
+### Unidimensional model
+
+model_hrs_hcap_mmse <- "cog = 1-37"
+
+res_1f <- mirt(hcog1, model_hrs_hcap_mmse, 
+    method="MHRM",
+    technical=list(NCYCLES=1000))
+
+summary(res_1f)
+
+fit_1f <- M2(res_1f,calcNull = TRUE, CI = 0.90, type = "C2", na.rm = TRUE)
+
+### Multidimensional model - shared methods
+
+model_hrs_hcap_mmse_m1 <- "cog = 1-37
+                        recmmse = 3-4
+                        wltics = 12-13
+                        cerhcap = 21-23
+                        bmhcap = 25-26
+                        lmhcap = 27-29
+                        cnpxhcap = 30-31
+                        trhcap = 35-36"
+
+res_md_1 <- mirt(hcog1, model_hrs_hcap_mmse_m1, 
+               method="MHRM",
+               technical=list(NCYCLES=1000))
+
+summary(res_md_1)
+coef(res_md_1)
+
+fit_md_1 <- M2(res_md_1,calcNull = TRUE, CI = 0.90, type = "C2", na.rm = TRUE,
+    QMC = TRUE)
+
+# constrained loadings of 2-indicator factors
+res_md_1a <- mirt(hcog1, model_hrs_hcap_mmse_m1, 
+    method="MHRM",
+    constrain = list(c(28,38),c(128,145),c(315,332),c(401,417),c(484,500)),
+    technical=list(NCYCLES=1000))
+
+summary(res_md_1a)
+coef(res_md_1a)
+
+fit_md_1a <- M2(res_md_1a,calcNull = TRUE, CI = 0.90, type = "C2", na.rm = TRUE,
+    QMC = TRUE)
+
+
+### Multidimensional model - shared methods and content
+
+model_hrs_hcap_mmse_m2 <- "cog = 1-37
+                        recmmse = 3-4
+                        wltics = 12-13
+                        cerhcap = 21-23
+                        bmhcap = 25-26
+                        lmhcap = 27-29
+                        cnpxhcap = 30-31
+                        trhcap = 35-36
+                        ornt = 1,18
+                        nmng = 6,19,20"
+
+res_md_2 <- mirt(hcog1, model_hrs_hcap_mmse_m2, 
+    method="MHRM",
+    technical=list(NCYCLES=1000))
+
+summary(res_md_2)
+coef(res_md_2)
+
+fit_md_2 <- M2(res_md_2,calcNull = TRUE, CI = 0.90, type = "C2", na.rm = TRUE,
+               QMC = TRUE)
+
+# constrained loadings of 2-indicator factors
+res_md_2a <- mirt(hcog1, model_hrs_hcap_mmse_m2, 
+    method="MHRM",
+    constrain = list(c(31,43),c(148,167),c(359,378),c(453,471),c(545,563),c(1,251)),
+    technical=list(NCYCLES=1000))
+
+# par <- mod2values(res_md_2)
+
+summary(res_md_2a)
+coef(res_md_2a)
+
+fit_md_2a <- M2(res_md_2a,calcNull = TRUE, CI = 0.90, type = "C2", na.rm = TRUE,
+               QMC = TRUE)
+
+save(res_1f,res_md_1,res_md_2,res_md_2a,fit_1f,fit_md_1,fit_md_2,fit_md_2a,
+     file = "~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Analysis/co_calibration_results.Rdata")
+
+
+
+
+#   ------------------------------end mirt models ------------------------------
+
+
+```
+
+
+### Model Fit Comparisons
+
+```{r unidimensional,echo = TRUE, results = "asis"}
+load("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Analysis/co_calibration_results.Rdata")
+
+fit_1f <- fit_1f %>% mutate(model = "unidimensional") %>% 
+    relocate(model)
+fit_md_1a <- fit_md_1a %>% mutate(model = "multidimensional 1") %>% 
+    relocate(model)
+fit_md_2a <- fit_md_2a %>% mutate(model = "multidimensional 2") %>% 
+    relocate(model)
+
+fit_summ <- bind_rows(fit_1f, fit_md_1a, fit_md_2a)
+
+pandoc.table(fit_summ, row.names = FALSE, caption = "Model fit comparisons")
+
+```
+
+### Test Information Curves
+
+```{r test_info_prep,echo=FALSE,warning=FALSE,message=FALSE, include = FALSE, cache = TRUE}
+
+
+extractMIRTParm <- function(model,max_thresh = 9) {
+    require(mirt)
+    
+    parm <- mod2values(model)
+    
+    parmw <- parm %>% dplyr::select(item, name, value) %>% 
+        pivot_wider(id_cols = item, names_from = name, values_from = value) %>% 
+        filter(!item == "GROUP") %>% mutate(
+            d1 = case_when(
+                is.na(d1) ~ d,
+                TRUE ~ d1
+            )
+        )
+    
+    a <- as.matrix(parmw %>% dplyr::select(a1))
+    d <- as.matrix(parmw %>% dplyr::select(paste0("d",1:max_thresh)))
+    return(list(a,d))
+}
+
+hcog <- readRDS("~/Psychometrics Conference/2024/Simulation WG/Data/hrs_hcap_co_calibration_analytic.rds")
+
+### Item names for analysis
+
+mmse_nmsr <- c("ornttime_mmser","orntplace_mmser","imrec_mmser","delrec_mmser",
+               "spellbck_mmser","naming_mmser","phrase_mmser","commfoll_mmser","writesent_mmser",
+               "draw_mmser","comm3step_mmser")
+
+tics_nmsr <- c("wlimrc_ticsr","wldlrc_ticsr","count_ticsr","animfl_ticsr",
+               "numser_ticsr","serial7_ticsr","ornttime_ticsr","naming_ticsr")
+
+hcap_nmsr <- c("naming_hcapr","ceradtot_hcapr","ceraddel_hcapr","ceradrcg_hcapr",
+               "animfl_hcapr","bmim_hcapr","bmdel_hcapr","lmim_hcapr","lmdel_hcapr","lmrcg_hcapr",
+               "conprxim_hcapr","conprxdel_hcapr","dsmt_hcapr","numser_hcapr","ravens_hcapr",
+               "trailsa_hcapir","trailsb_hcapir","spatial_hcapr")
+
+hcog1 <- hcog[,c(mmse_nmsr,tics_nmsr,hcap_nmsr)]
+
+mirt_mmse <- "mmse = 1-11"
+mirt_tics <- "tics = 1-8"
+mirt_hcap <- "hcap = 1-18"
+mirt_all <- "cog = 1-37"
+
+
+
+true_sim <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/simulated_longitudinal_true_cognition.rds")
+
+item_labels <- names(hcog1)
+
+a <- extractMIRTParm((res_md_1a))[[1]]
+d <- extractMIRTParm((res_md_1a))[[2]]
+
+df <- data.frame(simdata(a = a, d = d, N = 1000, itemtype = 'graded'))
+
+
+# cat("Test Information Curve - MMSE")
+mod <- mirt(data = df[,1:11], model = mirt_mmse)
+info_mmse <- plot(mod, type = 'info', ylim = c(0,40), 
+     main = "Test Information Curve - MMSE")
+
+# cat("Test Information Curve - TICS")
+mod <- mirt(data = df[,12:19], model = mirt_tics)
+info_tics <- plot(mod, type = 'info', ylim = c(0,40), 
+     main = "Test Information Curve - TICS")
+
+# cat("Test Information Curve - HCAP")
+mod <- mirt(data = df[,20:37], model = mirt_hcap)
+info_hcap <- plot(mod, type = 'info', ylim = c(0,40), 
+     main = "Test Information Curve - HCAP")
+
+# cat("Test Information Curve - MMSE + TICS + HCAP")
+mod <- mirt(data = df, model = mirt_all)
+info_all <- plot(mod, type = 'info', ylim = c(0,40), 
+     main = "Test Information Curve - MMSE + TICS + HCAP")
+
+```
+
+```{r test_info,echo=FALSE,warning=FALSE,message=FALSE}
+
+info_mmse
+info_tics
+info_hcap
+info_all
+
+```
+
+## Simulation of Longitudinal Cognitive Change
+
+### Simulation Functions
+
+```{r simulation_fcns, echo=TRUE,eval=FALSE}
+#   extractMIRTParm is a function that extracts item parameters from a mirt
+#       estimate multidimensional (uncorrelated dimensions) model and converts
+#       discrimination (a) parameters to a vector of item parameters and 
+#       threshhold (d) parameters to a matrix of d values.
+#   Parameters
+#       model - estimated mirt model object
+#       max_thresh - maximum number of threshold paramters across items
+#   Value list with 2 elements
+#       a - vector of a parameters, 1 for each item
+#       d - matrix of d parameters, rows correspons to items, columns to threshholds
+
+extractMIRTParm <- function(model,max_thresh = 9) {
+    require(mirt)
+    
+    parm <- mod2values(model)
+    
+    parmw <- parm %>% dplyr::select(item, name, value) %>% 
+        pivot_wider(id_cols = item, names_from = name, values_from = value) %>% 
+        filter(!item == "GROUP") %>% mutate(
+            d1 = case_when(
+                is.na(d1) ~ d,
+                TRUE ~ d1
+            )
+        )
+    
+    a <- as.matrix(parmw %>% dplyr::select(a1))
+    d <- as.matrix(parmw %>% dplyr::select(paste0("d",1:max_thresh)))
+    return(list(a,d))
+}
+
+
+
+
+
+
+#   simTraj is a function that 1) estimates a mirt model using a simulated
+#       item response dataset, 2) calculates factor scores based on the estimated 
+#       model, 3) estimates linear mixed effects models with true cognition and  
+#       simulated cognition (factor scores from simulated item responses) as dependent 
+#       variables, time in study as a fixed effect variable, and person and 
+#       person-by-time random effects, and 4) 4) returns person specific estimates 
+#       (random effects) of cognitive components slopes and intercepts.
+#   Parameters
+#       data - data frame that contains true cognition value, simulated item responses, 
+#           id variable, and time in study variable
+#       mirt_mod - mirt model specification
+#   Value - list with 5 elements:
+#       data frame with estimated random effects for mirt_mod applied to data. 
+#           Includes intercept and slope random effects for true cognition (_true) 
+#           and simulated cognition factor scores (_sim)
+
+simTraj <- function(data = df, item_labels = item_labels, mirt_mod = mirt_all) {
+    require(mirt)
+    require(tidyverse)
+    
+    # estimate mirt model using simulated responses and generate factor scores
+    
+    re_empty <- data.frame(id = NA, int_true = NA, slope_true = NA, 
+        int_true_se = NA,slope_true_se = NA, int_sim = NA, slope_sim = NA, 
+        int_sim_se = NA, slope_sim_se = NA)
+    
+    tryCatch({
+        mod <- mirt(data[,item_labels], mirt_mod)
+        data$sim_cog <- fscores(mod)
+        data <- data %>% relocate(sim_cog, .after = true_cog)
+    }, error=function(e){return(re_empty)})
+    data$itertion <- iter
+    
+    tryCatch({
+        # mixed effects longitudinal model - true cognition
+        res_long_true <- lmer(true_cog ~ time + (1 + time | id), data = data)
+        # summary(res_long_true)
+        re_true <- data.frame(ranef(res_long_true))
+        re_true <- re_true %>% 
+            pivot_wider(id_cols = grp, names_from = term,values_from = c(condval,condsd))
+        names(re_true) <- c("id","int_true","slope_true","int_true_se","slope_true_se")
+        
+        res_long_sim <- lmer(sim_cog ~ time + (1 + time | id), data = data)
+        # summary(res_long_sim)
+        re_sim <- data.frame(ranef(res_long_sim))
+        re_sim <- re_sim %>% 
+            pivot_wider(id_cols = grp, names_from = term,values_from = c(condval,condsd))
+        names(re_sim) <- c("id","int_sim","slope_sim","int_sim_se","slope_sim_se")
+        
+        re <- re_true %>% left_join(re_sim, by="id")
+    }, error=function(e){re <- re_empty})
+    re$itertion <- iter
+    
+    return(re)
+    
+}
+
+#   simulateTrajectories is a function that 1) simulates item responses for 
+#   true cognition vectors for different components of the HRS-HCAP cognitive test
+#   battery (MMSE, HRS TICS, HCAP, MMSE+TICS+HCAP), and 2) generates simulated observed (factor)
+#   scores for each of the cognitive components (simTraj()), 3) estimates linear mixed effects models
+#   with true cognition and simulated cognition (factor scores from simulated item responses)
+#   as dependent variables, time in study as a fixed effect variable, and person and 
+#   person-by-time random effects (simTraj()), 4) collates person specific estimates (random effects)
+#   of cognitive components slopes and intercepts.
+# 
+#   Parameters
+#       true_sim - data frame with true cognition values, rows correspond to assessments,
+#           columns correspond to simulation iterations.
+#       a_par - vector/data frame containing a (discrimination) item parameters 
+#           from mirt co-calibration model
+#       d_par - vector/data frame containing d (threshhold) item parameters 
+#           from mirt co-calibration model
+#       item_labels - item labels
+#       niters - number of simulation iterations
+#
+#   Value - list with 5 elements:
+#       ds - list of datasets for each niter simulations. Each dataset contains
+#           the true cognition value (true_cog) and the simulated item responses conditional
+#           on true_cog
+#       re_all - estimated random effects for the full HRS-HCAP cognitive test battery
+#           (MMSE+TICS+HCAP). Includes intercept and slope random effects for true
+#           cognition (_true) and simulated cognition factor scores (_sim)
+#       re_mmse - estimated random effects for the MMSE component of the HRS-HCAP 
+#           cognitive test battery. Includes intercept and slope random effects for true
+#           cognition (_true) and simulated cognition factor scores (_sim)
+#       re_tics - estimated random effects for the TICS component of the HRS-HCAP 
+#           cognitive test battery. Includes intercept and slope random effects for true
+#           cognition (_true) and simulated cognition factor scores (_sim)
+#       re_hcap - estimated random effects for the HCAP component of the HRS-HCAP 
+#           cognitive test battery. Includes intercept and slope random effects for true
+#           cognition (_true) and simulated cognition factor scores (_sim)
+
+simulateTrajectories <- function(true_sim = s4, a_par = a, d_par = d, item_labels, niter = 100) {
+    require(mirt)
+    require(tidyverse)
+    ds <- list()
+    re_all <- list()
+    re_mmse <- list()
+    re_tics <- list()
+    re_hcap <- list()
+    set.seed(092724)
+    for (iter in 1:niter) {
+        cat(paste0("Iteration - ",iter,"\n"))
+        
+        # simulate item responses
+        df <- data.frame(simdata(a = a_par, d = d_par, Theta = true_sim[,paste0("vm",iter)], 
+            itemtype = 'graded'))
+        names(df) <- item_labels
+        df$id <- true_sim$id
+        df$time <- true_sim$time
+        df$true_cog <- true_sim[,paste0("vm",iter)]
+        df$iteration <- iter
+        df <- df %>% relocate(c(id,iteration,time,true_cog))
+        
+        ds[[iter]] <- df
+        
+        flag_low_response <- FALSE
+        for (itnm in item_labels) {
+            if (length(table(df[,itnm])) < 2) {
+                flag_low_response <- TRUE
+            }
+        }
+        if (flag_low_response == TRUE) {
+            iter = iter - 1
+            next
+        }
+        
+        # mirt_models
+        
+        mirt_mmse <- "mmse = 1-11"
+        mirt_tics <- "tics = 1-8"
+        mirt_hcap <- "hcap = 1-18"
+        mirt_all <- "cog = 1-37"
+        
+        re <- simTraj(data = df, item_labels = item_labels, mirt_mod = mirt_all)
+        re$label <- "MMSE+TICS+HCAP"
+        re_all[[iter]] <- re
+
+        re <- simTraj(data = df, item_labels = item_labels[1:11], mirt_mod = mirt_mmse)
+        re$label <- "MMSE"
+        re_mmse[[iter]] <- re
+ 
+        re <- simTraj(data = df, item_labels = item_labels[12:19], mirt_mod = mirt_tics)
+        re$label <- "TICS"
+        re_tics[[iter]] <- re
+        
+        re <- simTraj(data = df, item_labels = item_labels[20:37], mirt_mod = mirt_hcap)
+        re$label <- "HCAP"
+        re_hcap[[iter]] <- re
+        
+        
+    } # end for iter
+    
+    return(list("ds" = ds, "re_all" = re_all, "re_mmse" = re_mmse,
+        "re_tics" = re_tics, "re_hcap" = re_hcap))
+}
+
+
+```
+
+### Simulated Cognition Change versus True Cognition Change Plots
+
+```{r cog_ch_plots, echo=FALSE, message = FALSE, warning = FALSE}
+
+sim20 <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Analysis/sim20.rds")
+
+re_all <- sim20[["re_all"]]
+re_mmse <- sim20[["re_mmse"]]
+re_tics <- sim20[["re_tics"]]
+re_hcap <- sim20[["re_hcap"]]
+
+re_all_summ <- bind_rows(re_all)
+re_mmse_summ <- bind_rows(re_mmse)
+re_tics_summ <- bind_rows(re_tics)
+re_hcap_summ <- bind_rows(re_hcap)
+ggplot(data=re_mmse_summ,aes(slope_true,slope_sim)) + 
+    geom_point() + 
+    geom_smooth() +
+    labs(caption = "True versus simulated cognitive change - MMSE")
+ggplot(data=re_tics_summ,aes(slope_true,slope_sim)) + 
+    geom_point() + 
+    geom_smooth() +
+    labs(caption = "True versus simulated cognitive change - TICS")
+ggplot(data=re_hcap_summ,aes(slope_true,slope_sim)) + 
+    geom_point() + 
+    geom_smooth() +
+    labs(caption = "True versus simulated cognitive change - HCAP")
+ggplot(data=re_all_summ,aes(slope_true,slope_sim)) + 
+    geom_point() + 
+    geom_smooth() +
+    labs(caption = "True versus simulated cognitive change - MMSE + TICS + HCAP")
+
+
+
+```
+
