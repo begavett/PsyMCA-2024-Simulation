@@ -526,7 +526,7 @@ pandoc.table(fit_summ, row.names = FALSE, caption = "Model fit comparisons")
 
 ### Test Information Curves
 
-```{r test_info_prep,echo=FALSE,warning=FALSE,message=FALSE, include = FALSE, cache = TRUE}
+```{r test_info_prep,echo=TRUE,warning=FALSE,message=FALSE, include = FALSE, cache = TRUE}
 
 
 extractMIRTParm <- function(model,max_thresh = 9) {
@@ -619,6 +619,18 @@ info_all
 ### Simulation Functions
 
 ```{r simulation_fcns, echo=TRUE,eval=FALSE}
+require(lme4)
+require(mirt)
+require(tidyverse)
+require(ggplot2)
+
+# show size of environment objects
+# sort( sapply(ls(),function(x){object.size(get(x))})) 
+
+# rm(list = ls()[grepl("^fit",ls())])
+
+
+
 #   extractMIRTParm is a function that extracts item parameters from a mirt
 #       estimate multidimensional (uncorrelated dimensions) model and converts
 #       discrimination (a) parameters to a vector of item parameters and 
@@ -650,64 +662,92 @@ extractMIRTParm <- function(model,max_thresh = 9) {
 }
 
 
-
-
-
-
 #   simTraj is a function that 1) estimates a mirt model using a simulated
 #       item response dataset, 2) calculates factor scores based on the estimated 
 #       model, 3) estimates linear mixed effects models with true cognition and  
 #       simulated cognition (factor scores from simulated item responses) as dependent 
 #       variables, time in study as a fixed effect variable, and person and 
-#       person-by-time random effects, and 4) 4) returns person specific estimates 
+#       person-by-time random effects, and 4) returns person specific estimates 
 #       (random effects) of cognitive components slopes and intercepts.
 #   Parameters
 #       data - data frame that contains true cognition value, simulated item responses, 
 #           id variable, and time in study variable
-#       mirt_mod - mirt model specification
-#   Value - list with 5 elements:
-#       data frame with estimated random effects for mirt_mod applied to data. 
+#       sim_cog_var - label for variable within dataframe (data) for which 
+#           trajectories are being simulated
+#       frml - formula specification for (lmer) longitudinal mixed effects model
+#       iteration = iteration number passed from simulateTrajectories
+#   Value - list with 3 elements:
+#       data - analytic dataframe (data) with longitudinal model predicted cognition 
+#           values for each assessment
+#       re - data frame with estimated random effects from longitudinal model. 
 #           Includes intercept and slope random effects for true cognition (_true) 
 #           and simulated cognition factor scores (_sim)
+#       fe - data frame with estimated fixed effects from longitudinal model. 
 
-simTraj <- function(data = df, item_labels = item_labels, mirt_mod = mirt_all) {
-    require(mirt)
+# simTraj <- function(data = df, item_labels = item_labels, mirt_mod = mirt_all,
+#     iteration = iteration) {
+simTraj <- function(data = df, sim_cog_var = "sim_cog_all", frml = frml,
+    iteration = iteration) {
     require(tidyverse)
+    require(lme4)
     
-    # estimate mirt model using simulated responses and generate factor scores
-    
-    re_empty <- data.frame(id = NA, int_true = NA, slope_true = NA, 
-        int_true_se = NA,slope_true_se = NA, int_sim = NA, slope_sim = NA, 
+    # # estimate mirt model using simulated responses and generate factor scores
+    re_empty <- data.frame(id = NA, int_true = NA, slope_true = NA,
+        int_true_se = NA,slope_true_se = NA, int_sim = NA, slope_sim = NA,
         int_sim_se = NA, slope_sim_se = NA)
+    # 
+    # tryCatch({
+    #     mod <- mirt(data[,item_labels], mirt_mod)
+    #     data$sim_cog <- fscores(mod)
+    #     data <- data %>% relocate(sim_cog, .after = true_cog)
+    # }, error=function(e){return(re_empty)})
+    # data$itertion <- iteration
     
-    tryCatch({
-        mod <- mirt(data[,item_labels], mirt_mod)
-        data$sim_cog <- fscores(mod)
-        data <- data %>% relocate(sim_cog, .after = true_cog)
-    }, error=function(e){return(re_empty)})
-    data$itertion <- iter
-    
+    # frml <- "true_cog ~ time + agebl_75 + slope_true_qrtl +
+    # time:agebl_75 + time:slope_true_qrtl + (1 + time | id)"
+    # frml <- "true_cog ~ time + agebl_75 + 
+    # time:agebl_75 + (1 | id)"
+    # 
     tryCatch({
         # mixed effects longitudinal model - true cognition
-        res_long_true <- lmer(true_cog ~ time + (1 + time | id), data = data)
+        # res_long_true <- lmer(true_cog ~ time + (1 + time | id), data = data)
+        res_long_true <- lmer(formula = frml, data = data)
         # summary(res_long_true)
+        # str(coef(res_long_true))
+        data$cog_true_pred <- predict(res_long_true, newdata = data, type = "response")
         re_true <- data.frame(ranef(res_long_true))
         re_true <- re_true %>% 
             pivot_wider(id_cols = grp, names_from = term,values_from = c(condval,condsd))
         names(re_true) <- c("id","int_true","slope_true","int_true_se","slope_true_se")
+        re_true$id <- as.integer(levels(re_true$id))[re_true$id]
+        fe_true <- data.frame(t(lme4::fixef(res_long_true)))
+        names(fe_true) <- paste0(names(fe_true),"_true")
         
-        res_long_sim <- lmer(sim_cog ~ time + (1 + time | id), data = data)
+        
+        data$sim_cog <- data[,sim_cog_var]
+        #res_long_sim <- lmer(sim_cog ~ time + (1 + time | id), data = data)
+        frml <- sub("true_cog","sim_cog",frml)
+        res_long_sim <- lmer(formula = frml, data = data)
         # summary(res_long_sim)
+        
+        data$cog_sim_pred <- predict(res_long_sim, newdata = data, type = "response")
+        data <- data %>% dplyr::select(-sim_cog)
         re_sim <- data.frame(ranef(res_long_sim))
         re_sim <- re_sim %>% 
             pivot_wider(id_cols = grp, names_from = term,values_from = c(condval,condsd))
         names(re_sim) <- c("id","int_sim","slope_sim","int_sim_se","slope_sim_se")
+        re_sim$id <- as.integer(levels(re_sim$id))[re_sim$id] 
+        fe_sim <- data.frame(t(lme4::fixef(res_long_sim)))
+        names(fe_sim) <- paste0(names(fe_sim),"_sim")
         
         re <- re_true %>% left_join(re_sim, by="id")
+        fe <- bind_cols(fe_true,fe_sim)
+        fe$iteration <- iteration
+        
     }, error=function(e){re <- re_empty})
-    re$itertion <- iter
+    re$iteration <- iteration
     
-    return(re)
+    return(list(data,re,fe))
     
 }
 
@@ -728,12 +768,18 @@ simTraj <- function(data = df, item_labels = item_labels, mirt_mod = mirt_all) {
 #       d_par - vector/data frame containing d (threshhold) item parameters 
 #           from mirt co-calibration model
 #       item_labels - item labels
-#       niters - number of simulation iterations
+#       iter_group - number of groups of (niter) iterations
+#       niter - number of simulation iterations within iteration groups
+#       out_dir - path to directory for output of simulation results
+#       frml - formula specification for (lmer) longitudinal mixed effects model
 #
-#   Value - list with 5 elements:
+#   Value - Saves lists of results to out_dir - there is a file for each iter_group 
+#       that contains niter elements:
 #       ds - list of datasets for each niter simulations. Each dataset contains
-#           the true cognition value (true_cog) and the simulated item responses conditional
-#           on true_cog
+#           the true cognition value (true_cog), the simulated item responses conditional
+#           on true_cog, simulated item response data and cognition factor scores, 
+#           and longitudinal mixed effect model predicted cognition values for each simulated
+#           assessment. Measures include MMSE, TICS, HCAP, and MMSE+TICS+HCAP.
 #       re_all - estimated random effects for the full HRS-HCAP cognitive test battery
 #           (MMSE+TICS+HCAP). Includes intercept and slope random effects for true
 #           cognition (_true) and simulated cognition factor scores (_sim)
@@ -746,70 +792,273 @@ simTraj <- function(data = df, item_labels = item_labels, mirt_mod = mirt_all) {
 #       re_hcap - estimated random effects for the HCAP component of the HRS-HCAP 
 #           cognitive test battery. Includes intercept and slope random effects for true
 #           cognition (_true) and simulated cognition factor scores (_sim)
+#       fe_all - estimated fixed effects for mixed effect model of cognition measured 
+#           by full HRS-HCAP cognitive test battery (MMSE+TICS+HCAP). 
+#           Includes intercept and slope random effects for true
+#           cognition (_true) and simulated cognition factor scores (_sim).
+#       fe_mmse - estimated fixed effects for mixed effect model of cognition measured 
+#           by MMSE. 
+#           Includes intercept and slope random effects for true
+#           cognition (_true) and simulated cognition factor scores (_sim).
+#       fe_tics - estimated fixed effects for mixed effect model of cognition measured 
+#           by TICS. 
+#           Includes intercept and slope random effects for true
+#           cognition (_true) and simulated cognition factor scores (_sim).
+#       fe_hcap - estimated fixed effects for mixed effect model of cognition measured 
+#           by HCAP. 
+#           Includes intercept and slope random effects for true
+#           cognition (_true) and simulated cognition factor scores (_sim).
 
-simulateTrajectories <- function(true_sim = s4, a_par = a, d_par = d, item_labels, niter = 100) {
+simulateTrajectories <- function(true_sim, a_par, d_par, item_labels, 
+    niter = 20, iter_group = 5, out_dir = "Analysis/Simulation Results/",
+    frml = "true_cog ~ time + (1 | id)") {
     require(mirt)
     require(tidyverse)
-    ds <- list()
-    re_all <- list()
-    re_mmse <- list()
-    re_tics <- list()
-    re_hcap <- list()
-    set.seed(092724)
-    for (iter in 1:niter) {
-        cat(paste0("Iteration - ",iter,"\n"))
-        
-        # simulate item responses
-        df <- data.frame(simdata(a = a_par, d = d_par, Theta = true_sim[,paste0("vm",iter)], 
-            itemtype = 'graded'))
-        names(df) <- item_labels
-        df$id <- true_sim$id
-        df$time <- true_sim$time
-        df$true_cog <- true_sim[,paste0("vm",iter)]
-        df$iteration <- iter
-        df <- df %>% relocate(c(id,iteration,time,true_cog))
-        
-        ds[[iter]] <- df
-        
-        flag_low_response <- FALSE
-        for (itnm in item_labels) {
-            if (length(table(df[,itnm])) < 2) {
-                flag_low_response <- TRUE
+    for (itgrp in 1:iter_group) {
+        ds <- list()
+        re_all <- list()
+        re_mmse <- list()
+        re_tics <- list()
+        re_hcap <- list()
+        fe_all <- list()
+        fe_mmse <- list()
+        fe_tics <- list()
+        fe_hcap <- list()
+        set.seed(092724)
+        for (iter in 1:niter) {
+            cat(paste0("Group - ",itgrp, ", Iteration - ",iter,"\n"))
+            
+            # simulate item responses
+            iteration <- ((itgrp - 1) * niter) + iter
+            df <- data.frame(simdata(a = a_par, d = d_par, Theta = true_sim[,paste0("vm",iteration)], 
+                itemtype = 'graded'))
+            names(df) <- item_labels
+            df$id <- true_sim$id
+            df$time <- true_sim$time
+            df$agebl_75 <- true_sim$agebl_75
+            df$true_cog <- true_sim[,paste0("vm",iteration)]
+            df$iteration <- iteration
+            df <- df %>% relocate(c(id,iteration,time,true_cog))
+            
+            # true random effect intercept and slope - from calculate_re_true.R 
+            true_re <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/true_random_effects.rds")
+            df <- df %>% left_join((true_re %>% dplyr::select(id,int_true_qrtl,
+                slope_true_qrtl)),by="id")
+            
+            flag_low_response <- FALSE
+            for (itnm in item_labels) {
+                if (length(table(df[,itnm])) < 2) {
+                    flag_low_response <- TRUE
+                }
             }
-        }
-        if (flag_low_response == TRUE) {
-            iter = iter - 1
-            next
-        }
+            if (flag_low_response == TRUE) {
+                iter = iter - 1
+                next
+            }
+            
+            # mirt_models for cognition measures
+            
+            mirt_mmse <- "mmse = 1-11"
+            mirt_tics <- "tics = 1-8"
+            mirt_hcap <- "hcap = 1-18"
+            mirt_all <- "cog = 1-37"
+            
+            ### estimate mirt model using simulated responses and generate factor scores
+            # create empty re dataframe to return if error in generation
+            re_empty <- data.frame(id = NA, int_true = NA, slope_true = NA, 
+                int_true_se = NA,slope_true_se = NA, int_sim = NA, slope_sim = NA, 
+                int_sim_se = NA, slope_sim_se = NA)
+            
+            tryCatch({
+                mod <- mirt(df[,item_labels], mirt_all)
+                df$sim_cog_all <- fscores(mod)
+                mod <- mirt(df[,item_labels[1:11]], mirt_mmse)
+                df$sim_cog_mmse <- fscores(mod)
+                mod <- mirt(df[,item_labels[12:19]], mirt_tics)
+                df$sim_cog_tics <- fscores(mod)
+                mod <- mirt(df[,item_labels[20:37]], mirt_hcap)
+                df$sim_cog_hcap <- fscores(mod)
+                df <- df %>% 
+                    relocate(c(sim_cog_all,sim_cog_mmse,sim_cog_tics,sim_cog_hcap), 
+                        .after = true_cog)
+            }, error=function(e){return(re_empty)})
+            
+            # rescale factor scores to equate metric to true cognition
+            df <- df %>% mutate(
+                sim_cog_mmse_rs = (((sim_cog_mmse - mean(sim_cog_mmse)) / 
+                    sd(sim_cog_mmse)) * sd(true_cog)) + mean(true_cog),
+                sim_cog_tics_rs = (((sim_cog_tics - mean(sim_cog_tics)) / 
+                    sd(sim_cog_tics)) * sd(true_cog)) + mean(true_cog),
+                sim_cog_hcap_rs = (((sim_cog_hcap - mean(sim_cog_hcap)) / 
+                    sd(sim_cog_hcap)) * sd(true_cog)) + mean(true_cog),
+                sim_cog_all_rs = (((sim_cog_all - mean(sim_cog_all)) / 
+                    sd(sim_cog_all)) * sd(true_cog)) + mean(true_cog),
+            )
+            
+            ### calculate simulated random effects
+            
+            # frml <- as.formula(frml)
+            # frml <- as.formula("true_cog ~ time + (1 | id)")
+            # frml <- "true_cog ~ time + agebl_75 + slope_true_qrtl +
+            #     time:agebl_75 + time:slope_true_qrtl + (1 + time | id)"
+            
+            # MMSE+TICS+HCAP
+            res <- simTraj(data = df, sim_cog_var = "sim_cog_all_rs",frml = frml,
+                iteration = iteration)
+            df <- res[[1]]
+            df <- df %>% rename(cog_true_pred_all = cog_true_pred,
+                cog_sim_pred_all = cog_sim_pred)
+            re <- res[[2]]
+            re$label <- "MMSE+TICS+HCAP"
+            re_all[[paste0("iteration-",iteration)]] <- re
+            fe <- res[[3]]
+            fe$label <- "MMSE+TICS+HCAP"
+            fe_all[[paste0("iteration-",iteration)]] <- fe
+            
+            # MMSE
+            res <- simTraj(data = df, sim_cog_var = "sim_cog_mmse_rs",frml = frml,
+                iteration = iteration)
+            df <- res[[1]]
+            df <- df %>% rename(cog_true_pred_mmse = cog_true_pred,
+                 cog_sim_pred_mmse = cog_sim_pred)
+            re <- res[[2]]
+            re$label <- "MMSE"
+            re_mmse[[paste0("iteration-",iteration)]] <- re
+            fe <- res[[3]]
+            fe$label <- "MMSE"
+            fe_mmse[[paste0("iteration-",iteration)]] <- fe
+            
+            # TICS
+            res <- simTraj(data = df, sim_cog_var = "sim_cog_tics_rs",frml = frml,
+                iteration = iteration)
+            df <- res[[1]]
+            df <- df %>% rename(cog_true_pred_tics = cog_true_pred,
+                cog_sim_pred_tics = cog_sim_pred)
+            re <- res[[2]]
+            re$label <- "TICS"
+            re_tics[[paste0("iteration-",iteration)]] <- re
+            fe <- res[[3]]
+            fe$label <- "TICS"
+            fe_tics[[paste0("iteration-",iteration)]] <- fe
+            
+            # HCAP
+            res <- simTraj(data = df, sim_cog_var = "sim_cog_hcap_rs",frml = frml,
+                iteration = iteration)
+            df <- res[[1]]
+            df <- df %>% rename(cog_true_pred_hcap = cog_true_pred,
+                cog_sim_pred_hcap = cog_sim_pred)
+            re <- res[[2]]
+            re$label <- "HCAP"
+            re_hcap[[paste0("iteration-",iteration)]] <- re
+            fe <- res[[3]]
+            fe$label <- "HCAP"
+            fe_hcap[[paste0("iteration-",iteration)]] <- fe
+            
+            ds[[paste0("iteration-",iteration)]] <- df
+            
+            
+        } # end for iter
         
-        # mirt_models
+        saveRDS(ds, file = paste0(out_dir,"ds_iteration_group_", itgrp, ".rds"))
+        saveRDS(re_mmse, file = paste0(out_dir,"re_mmse_iteration_group_", itgrp, ".rds"))
+        saveRDS(re_tics, file = paste0(out_dir,"re_tics_iteration_group_", itgrp, ".rds"))
+        saveRDS(re_hcap, file = paste0(out_dir,"re_hcap_iteration_group_", itgrp, ".rds"))
+        saveRDS(re_all, file = paste0(out_dir,"re_all_iteration_group_", itgrp, ".rds"))
+        saveRDS(fe_mmse, file = paste0(out_dir,"fe_mmse_iteration_group_", itgrp, ".rds"))
+        saveRDS(fe_tics, file = paste0(out_dir,"fe_tics_iteration_group_", itgrp, ".rds"))
+        saveRDS(fe_hcap, file = paste0(out_dir,"fe_hcap_iteration_group_", itgrp, ".rds"))
+        saveRDS(fe_all, file = paste0(out_dir,"fe_all_iteration_group_", itgrp, ".rds"))
         
-        mirt_mmse <- "mmse = 1-11"
-        mirt_tics <- "tics = 1-8"
-        mirt_hcap <- "hcap = 1-18"
-        mirt_all <- "cog = 1-37"
-        
-        re <- simTraj(data = df, item_labels = item_labels, mirt_mod = mirt_all)
-        re$label <- "MMSE+TICS+HCAP"
-        re_all[[iter]] <- re
-
-        re <- simTraj(data = df, item_labels = item_labels[1:11], mirt_mod = mirt_mmse)
-        re$label <- "MMSE"
-        re_mmse[[iter]] <- re
- 
-        re <- simTraj(data = df, item_labels = item_labels[12:19], mirt_mod = mirt_tics)
-        re$label <- "TICS"
-        re_tics[[iter]] <- re
-        
-        re <- simTraj(data = df, item_labels = item_labels[20:37], mirt_mod = mirt_hcap)
-        re$label <- "HCAP"
-        re_hcap[[iter]] <- re
-        
-        
-    } # end for iter
+    } # end for itgrp
     
-    return(list("ds" = ds, "re_all" = re_all, "re_mmse" = re_mmse,
-        "re_tics" = re_tics, "re_hcap" = re_hcap))
+    for (itgrp in 1:iter_group) {
+        if (itgrp == 1) {
+            re_mmse <- readRDS(paste0(out_dir,"re_mmse_iteration_group_", itgrp, ".rds"))
+            re_mmse <- re_mmse %>% bind_rows()
+            re_tics <- readRDS(paste0(out_dir,"re_tics_iteration_group_", itgrp, ".rds"))
+            re_tics <- re_tics %>% bind_rows()
+            re_hcap <- readRDS(paste0(out_dir,"re_hcap_iteration_group_", itgrp, ".rds"))
+            re_hcap <- re_hcap %>% bind_rows()
+            re_all <- readRDS(paste0(out_dir,"re_all_iteration_group_", itgrp, ".rds"))
+            re_all <- re_all %>% bind_rows()
+            
+            fe_mmse <- readRDS(paste0(out_dir,"fe_mmse_iteration_group_", itgrp, ".rds"))
+            fe_mmse <- fe_mmse %>% bind_rows()
+            fe_tics <- readRDS(paste0(out_dir,"fe_tics_iteration_group_", itgrp, ".rds"))
+            fe_tics <- fe_tics %>% bind_rows()
+            fe_hcap <- readRDS(paste0(out_dir,"fe_hcap_iteration_group_", itgrp, ".rds"))
+            fe_hcap <- fe_hcap %>% bind_rows()
+            fe_all <- readRDS(paste0(out_dir,"fe_all_iteration_group_", itgrp, ".rds"))
+            fe_all <- fe_all %>% bind_rows()
+            
+        } else {
+            re_mmse_temp <- readRDS(paste0(out_dir,"re_mmse_iteration_group_", itgrp, ".rds"))
+            re_mmse_temp <- re_mmse_temp %>% bind_rows()
+            re_mmse <- bind_rows(re_mmse, re_mmse_temp)
+            re_tics_temp <- readRDS(paste0(out_dir,"re_tics_iteration_group_", itgrp, ".rds"))
+            re_tics_temp <- re_tics_temp %>% bind_rows()
+            re_tics <- bind_rows(re_tics, re_tics_temp)
+            re_hcap_temp <- readRDS(paste0(out_dir,"re_hcap_iteration_group_", itgrp, ".rds"))
+            re_hcap_temp <- re_hcap_temp %>% bind_rows()
+            re_hcap <- bind_rows(re_hcap, re_hcap_temp)
+            re_all_temp <- readRDS(paste0(out_dir,"re_all_iteration_group_", itgrp, ".rds"))
+            re_all_temp <- re_all_temp %>% bind_rows()
+            re_all <- bind_rows(re_all, re_all_temp)
+            
+            fe_mmse_temp <- readRDS(paste0(out_dir,"fe_mmse_iteration_group_", itgrp, ".rds"))
+            fe_mmse_temp <- fe_mmse_temp %>% bind_rows()
+            fe_mmse <- bind_rows(fe_mmse, fe_mmse_temp)
+            fe_tics_temp <- readRDS(paste0(out_dir,"fe_tics_iteration_group_", itgrp, ".rds"))
+            fe_tics_temp <- fe_tics_temp %>% bind_rows()
+            fe_tics <- bind_rows(fe_tics, fe_tics_temp)
+            fe_hcap_temp <- readRDS(paste0(out_dir,"fe_hcap_iteration_group_", itgrp, ".rds"))
+            fe_hcap_temp <- fe_hcap_temp %>% bind_rows()
+            fe_hcap <- bind_rows(fe_hcap, fe_hcap_temp)
+            fe_all_temp <- readRDS(paste0(out_dir,"fe_all_iteration_group_", itgrp, ".rds"))
+            fe_all_temp <- fe_all_temp %>% bind_rows()
+            fe_all <- bind_rows(fe_all, fe_all_temp)
+            
+        }
+    }
+    saveRDS(re_mmse, file = paste0(out_dir,"re_mmse", ".rds"))
+    saveRDS(re_tics, file = paste0(out_dir,"re_tics", ".rds"))
+    saveRDS(re_hcap, file = paste0(out_dir,"re_hcap", ".rds"))
+    saveRDS(re_all, file = paste0(out_dir,"re_all", ".rds"))
+
+    saveRDS(fe_mmse, file = paste0(out_dir,"fe_mmse", ".rds"))
+    saveRDS(fe_tics, file = paste0(out_dir,"fe_tics", ".rds"))
+    saveRDS(fe_hcap, file = paste0(out_dir,"fe_hcap", ".rds"))
+    saveRDS(fe_all, file = paste0(out_dir,"fe_all", ".rds"))
+    
+    
+    # return(list("ds" = ds, "re_all" = re_all, "re_mmse" = re_mmse,
+    #     "re_tics" = re_tics, "re_hcap" = re_hcap))
+}
+
+
+# dat_cols <- c("id","time","age","agebl_75","slope_true_qrtl","int_true_qrtl")
+# res_cols <- c("cog_true_pred_all","cog_sim_pred_all","cog_sim_pred_mmse",
+#               "cog_sim_pred_tics","cog_sim_pred_hcap")
+
+mergeSimResults <-function(file_name = "ds_iteration_group_1.rds",
+                           out_dir = out_dir,
+                           dat_cols = dat_cols, 
+                           res_cols = res_cols,
+                           iter_group = 50,
+                           niter = 20) {
+    res <- (readRDS(paste0(out_dir,file_name))[[1]] %>%
+                dplyr::select(any_of(dat_cols)))
+    for (i in 1:iter_group) {
+        for (n in 1:niter) {
+            iteration <- ((i-1) * niter) + n
+            fl_nm <- sub("_1",paste0("_",i),file_name)
+            ds <- readRDS(paste0(out_dir,fl_nm))[[n]] %>% 
+                dplyr::select(all_of(res_cols)) 
+            names(ds) <- paste0(res_cols,".",iteration)
+            res <- res %>% bind_cols(ds)
+        }
+    }   
+        return(res)
 }
 
 
@@ -817,32 +1066,40 @@ simulateTrajectories <- function(true_sim = s4, a_par = a, d_par = d, item_label
 
 ### Simulated Cognition Change versus True Cognition Change Plots
 
-```{r cog_ch_plots, echo=FALSE, message = FALSE, warning = FALSE}
+```{r cog_ch_plots, echo=TRUE, message = FALSE, warning = FALSE}
 
-sim20 <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Analysis/sim20.rds")
+# sim20 <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Analysis/sim20.rds")
+# 
+# re_all <- sim20[["re_all"]]
+# re_mmse <- sim20[["re_mmse"]]
+# re_tics <- sim20[["re_tics"]]
+# re_hcap <- sim20[["re_hcap"]]
 
-re_all <- sim20[["re_all"]]
-re_mmse <- sim20[["re_mmse"]]
-re_tics <- sim20[["re_tics"]]
-re_hcap <- sim20[["re_hcap"]]
+out_dir <- "~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Analysis/Simulation Results/10_04_24_unconditional/"
+
+re_all <- readRDS(paste0(out_dir,"re_all.rds"))
+re_mmse <- readRDS(paste0(out_dir,"re_mmse.rds"))
+re_tics <- readRDS(paste0(out_dir,"re_tics.rds"))
+re_hcap <- readRDS(paste0(out_dir,"re_hcap.rds"))
 
 re_all_summ <- bind_rows(re_all)
 re_mmse_summ <- bind_rows(re_mmse)
 re_tics_summ <- bind_rows(re_tics)
 re_hcap_summ <- bind_rows(re_hcap)
-ggplot(data=re_mmse_summ,aes(slope_true,slope_sim)) + 
+
+ggplot(data=re_mmse,aes(slope_true,slope_sim)) + 
     geom_point() + 
     geom_smooth() +
     labs(caption = "True versus simulated cognitive change - MMSE")
-ggplot(data=re_tics_summ,aes(slope_true,slope_sim)) + 
+ggplot(data=re_tics,aes(slope_true,slope_sim)) + 
     geom_point() + 
     geom_smooth() +
     labs(caption = "True versus simulated cognitive change - TICS")
-ggplot(data=re_hcap_summ,aes(slope_true,slope_sim)) + 
+ggplot(data=re_hcap,aes(slope_true,slope_sim)) + 
     geom_point() + 
     geom_smooth() +
     labs(caption = "True versus simulated cognitive change - HCAP")
-ggplot(data=re_all_summ,aes(slope_true,slope_sim)) + 
+ggplot(data=re_all,aes(slope_true,slope_sim)) + 
     geom_point() + 
     geom_smooth() +
     labs(caption = "True versus simulated cognitive change - MMSE + TICS + HCAP")
@@ -851,3 +1108,253 @@ ggplot(data=re_all_summ,aes(slope_true,slope_sim)) +
 
 ```
 
+### Simulated Cognitive Trajectories versus True Cognition Trajectories
+
+```{r cog_traj_plots, echo=TRUE, message = FALSE, warning = FALSE}
+
+# Create model predicted trajectories 
+
+# # code to create merged r1 dataset
+# dat_cols <- c("id","time","agebl_75","slope_true_qrtl","int_true_qrtl")
+# res_cols <- c("cog_true_pred_all","cog_sim_pred_all","cog_sim_pred_mmse",
+#               "cog_sim_pred_tics","cog_sim_pred_hcap")
+# out_dir <- "Analysis/Simulation Results/"
+# 
+# r1 <- mergeSimResults(file_name = "ds_iteration_group_1.rds", out_dir = out_dir, 
+#                       dat_cols = dat_cols, res_cols = res_cols, iter_group = 50, niter = 20)
+# saveRDS(r1,file=paste0(out_dir,"model_predicted_trajectory_simulations.rds"))
+# 
+# rm(r1)
+
+
+# prepare longitudinal data file
+
+out_dir <- "~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Analysis/Simulation Results/"
+dat_cols <- c("id","time","agebl_75","slope_true_qrtl","int_true_qrtl")
+res_cols <- c("cog_true_pred_all","cog_sim_pred_all","cog_sim_pred_mmse",
+              "cog_sim_pred_tics","cog_sim_pred_hcap")
+
+
+r1 <- readRDS(paste0(out_dir,"model_predicted_trajectory_simulations.rds"))
+
+r1$cog_true_pred_mn <- apply(r1[,names(r1)[grepl("cog_true", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$cog_true_pred_se <- apply(r1[,names(r1)[grepl("cog_true", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+# summary(r1$cog_true_mn)
+r1$cog_sim_pred_all_mn <- apply(r1[,names(r1)[grepl("sim_pred_all", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$cog_sim_pred_all_se <- apply(r1[,names(r1)[grepl("sim_pred_all", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$cog_sim_pred_mmse_mn <- apply(r1[,names(r1)[grepl("sim_pred_mmse", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$cog_sim_pred_mmse_se <- apply(r1[,names(r1)[grepl("sim_pred_mmse", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$cog_sim_pred_tics_mn <- apply(r1[,names(r1)[grepl("sim_pred_tics", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$cog_sim_pred_tics_se <- apply(r1[,names(r1)[grepl("sim_pred_tics", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$cog_sim_pred_hcap_mn <- apply(r1[,names(r1)[grepl("sim_pred_all", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$cog_sim_pred_hcap_se <- apply(r1[,names(r1)[grepl("sim_pred_all", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r2 <- r1 %>% dplyr::select(any_of(dat_cols),contains("_mn"),contains("_se")) %>% 
+    mutate(age = agebl_75 + 75)
+# summary(r2$age)
+
+r3a <- r2 %>% dplyr::select(-c(cog_true_pred_se:cog_sim_pred_hcap_se)) %>% 
+    pivot_longer(cols = cog_true_pred_mn:cog_sim_pred_hcap_mn,
+        names_to = "label", values_to = "cog")
+r3b <- r2 %>% dplyr::select(-c(cog_true_pred_mn:cog_sim_pred_hcap_mn)) %>% 
+    pivot_longer(cols = cog_true_pred_se:cog_sim_pred_hcap_se,
+        names_to = "label", values_to = "cog_se")
+
+r3 <- r3a %>% left_join((r3b %>% 
+    dplyr::select(id,time,label,cog_se)),by=c("id","time","label")) %>% 
+    mutate(
+        cognitive_measure = factor(case_when(
+            label == "cog_true_pred_mn" ~ "True Cognition",
+            label == "cog_sim_pred_all_mn" ~ "MMSE+TICS+HCAP",
+            label == "cog_sim_pred_mmse_mn" ~ "MMSE",
+            label == "cog_sim_pred_tics_mn" ~ "TICS",
+            label == "cog_sim_pred_hcap_mn" ~ "HCAP",
+        ), levels = c("True Cognition","MMSE+TICS+HCAP","HCAP","TICS","MMSE"))
+    )
+
+r4 <- r3 %>% group_by(time,slope_true_qrtl,cognitive_measure) %>% summarise(
+    mean_cog = mean(cog),
+    sd_cog = sd(cog)
+) %>% mutate(
+    se_cog = sd(mean_cog),
+    lower = mean_cog - se_cog,
+    upper = mean_cog + se_cog,
+)
+
+rm(r2,r3a,r3b)
+
+# cor(r1[,6:31])
+
+r1 <- r1[,1:505]
+
+
+r1$cog_true_pred_mn <- apply(r1[,names(r1)[grepl("cog_true", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$cog_true_pred_se <- apply(r1[,names(r1)[grepl("cog_true", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+# summary(r1$cog_true_mn)
+r1$cog_sim_pred_all_mn <- apply(r1[,names(r1)[grepl("sim_pred_all", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$cog_sim_pred_all_se <- apply(r1[,names(r1)[grepl("sim_pred_all", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$cog_sim_pred_mmse_mn <- apply(r1[,names(r1)[grepl("sim_pred_mmse", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$cog_sim_pred_mmse_se <- apply(r1[,names(r1)[grepl("sim_pred_mmse", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$cog_sim_pred_tics_mn <- apply(r1[,names(r1)[grepl("sim_pred_tics", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$cog_sim_pred_tics_se <- apply(r1[,names(r1)[grepl("sim_pred_tics", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$cog_sim_pred_hcap_mn <- apply(r1[,names(r1)[grepl("sim_pred_all", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$cog_sim_pred_hcap_se <- apply(r1[,names(r1)[grepl("sim_pred_all", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r2 <- r1 %>% dplyr::select(any_of(dat_cols),contains("_mn"),contains("_se")) %>% 
+    mutate(age = agebl_75 + 75)
+# summary(r2$age)
+
+r3a <- r2 %>% dplyr::select(-c(cog_true_pred_se:cog_sim_pred_hcap_se)) %>% 
+    pivot_longer(cols = cog_true_pred_mn:cog_sim_pred_hcap_mn,
+        names_to = "label", values_to = "cog")
+r3b <- r2 %>% dplyr::select(-c(cog_true_pred_mn:cog_sim_pred_hcap_mn)) %>% 
+    pivot_longer(cols = cog_true_pred_se:cog_sim_pred_hcap_se,
+        names_to = "label", values_to = "cog_se")
+
+r3 <- r3a %>% left_join((r3b %>% 
+    dplyr::select(id,time,label,cog_se)),by=c("id","time","label")) %>% 
+    mutate(
+        cognitive_measure = factor(case_when(
+            label == "cog_true_pred_mn" ~ "True Cognition",
+            label == "cog_sim_pred_all_mn" ~ "MMSE+TICS+HCAP",
+            label == "cog_sim_pred_mmse_mn" ~ "MMSE",
+            label == "cog_sim_pred_tics_mn" ~ "TICS",
+            label == "cog_sim_pred_hcap_mn" ~ "HCAP",
+        ), levels = c("True Cognition","MMSE+TICS+HCAP","HCAP","TICS","MMSE"))
+    )
+
+r4a <- r3 %>% group_by(time,slope_true_qrtl,cognitive_measure) %>% summarise(
+    mean_cog = mean(cog),
+    sd_cog = sd(cog)
+) %>% mutate(
+    se_cog = sd(mean_cog),
+    lower = mean_cog - se_cog,
+    upper = mean_cog + se_cog,
+)
+
+rm(r1,r2,r3a,r3b)
+
+
+
+
+### End data   
+
+pd <- position_dodge(width = 0.2) # move them .2 to the left and right
+
+ggplot(data = r4, aes(x = time, y = mean_cog, color = slope_true_qrtl)) +
+    geom_line() +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
+    facet_wrap(vars(cognitive_measure)) +
+    labs(caption = "True versus simulated cognitive trajectories (1000 Smulations) - All Cognition Measures")
+
+ggplot(data = r4a, aes(x = time, y = mean_cog, color = slope_true_qrtl)) +
+    geom_line() +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
+    facet_wrap(vars(cognitive_measure)) +
+    labs(caption = "True versus simulated cognitive trajectories (100 Simulations) - All Cognition Measures")
+
+r4 <- r4 %>% mutate(n_sim = 1000)
+r4a <- r4a %>% mutate(n_sim = 100)
+
+
+r10 <- r4 %>% bind_rows(r4a) %>% mutate(
+  n_sim = factor(n_sim, levels = c(100,1000))
+)
+
+ggplot(data = r10, aes(x = time, y = mean_cog, color = slope_true_qrtl,
+        linetype = n_sim)) +
+    geom_line() +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
+    facet_wrap(vars(cognitive_measure)) +
+    labs(caption = "True versus simulated cognitive trajectories by number of simulations - All Cognition Measures")
+
+
+r5 <- r4 %>% filter(cognitive_measure %in% c("MMSE+TICS+HCAP","True Cognition"))
+
+ggplot(data = r5, aes(x = time, y = mean_cog, color = slope_true_qrtl,
+    linetype = cognitive_measure)) +
+    geom_line() +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
+    labs(caption = "True versus simulated cognitive change (1000 Smulations) - MMSE + TICS + HCAP")
+
+r6 <- r4 %>% filter(cognitive_measure %in% c("HCAP","True Cognition"))
+
+ggplot(data = r6, aes(x = time, y = mean_cog, color = slope_true_qrtl,
+    linetype = cognitive_measure)) +
+    geom_line() +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
+    labs(caption = "True versus simulated cognitive change (1000 Smulations) - HCAP")
+
+r7 <- r4 %>% filter(cognitive_measure %in% c("TICS","True Cognition"))
+
+ggplot(data = r7, aes(x = time, y = mean_cog, color = slope_true_qrtl,
+    linetype = cognitive_measure)) +
+    geom_line() +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
+    labs(caption = "True versus simulated cognitive change (1000 Smulations) - TICS")
+
+r7a <- r4a %>% filter(cognitive_measure %in% c("TICS","True Cognition"))
+
+ggplot(data = r7a, aes(x = time, y = mean_cog, color = slope_true_qrtl,
+    linetype = cognitive_measure)) +
+    geom_line() +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
+    labs(caption = "True versus simulated cognitive change (100 Smulations) - TICS")
+
+r8 <- r4 %>% filter(cognitive_measure %in% c("MMSE","True Cognition"))
+
+ggplot(data = r8, aes(x = time, y = mean_cog, color = slope_true_qrtl,
+    linetype = cognitive_measure)) +
+    geom_line() +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
+    labs(caption = "True versus simulated cognitive change (1000 Smulations) - MMSE")
+
+r8a <- r4a %>% filter(cognitive_measure %in% c("MMSE","True Cognition"))
+
+ggplot(data = r8a, aes(x = time, y = mean_cog, color = slope_true_qrtl,
+    linetype = cognitive_measure)) +
+    geom_line() +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
+    labs(caption = "True versus simulated cognitive change (100 Smulations) - MMSE")
+
+
+r9 <- r4 %>% filter(cognitive_measure %in% c("MMSE+TICS+HCAP","MMSE"))
+
+ggplot(data = r9, aes(x = time, y = mean_cog, color = slope_true_qrtl,
+        linetype = cognitive_measure)) +
+    geom_line() +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
+    labs(caption = "Simulated cognitive change (1000 Smulations) - MMSE + TICS + HCAP vs. MMSE")
+
+
+
+
+rm(r4,r4a,r5,r6,r7,r7a,r8,r8a,r9,r10)
+
+```
