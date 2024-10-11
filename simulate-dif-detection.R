@@ -387,6 +387,7 @@ kmeans_scheme
 
 
 
+
 # Combine recoding schemes
 
 all_recoding_schemes <- eq_freq_scheme %>%
@@ -454,6 +455,7 @@ mimic_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group
 
 # mimic_dif()
 
+## Automated Multiple groups analysis for DIF detection ------------------------------
 
 mg_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", dif_alpha = .01) {
   
@@ -468,7 +470,9 @@ mg_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", 
   mg0_syntax <- paste0(mg0_syntax, "\n cog ~~ c(1, NA)*cog \n cog ~ c(0, NA)*1", collapse = "\n")
   
   m0 <- cfa(mg0_syntax, data = data, estimator = "mlr", std.lv = TRUE, group = "group")
-  
+  unadj_factor_scores <- lavPredict(m0, se = "standard", assemble = TRUE)
+  unadj_factor_scores$se <- as.numeric(attr(lavPredict(m0, se = "standard"), "se")[[1]])
+  names(unadj_factor_scores) <- c("unadj_cog_fs", "group", "unadj_cog_fs_se")
   i <- 0
   pval <- 0
   
@@ -496,13 +500,20 @@ mg_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", 
              mutate(code = paste(lhs, op, rhs)) %>%
              pull(code))
     
-    assign(paste0("mg", i + 1, "_syntax"), ifelse(str_detect(get(paste0("m", i, "free")), " =~ "), gsub(paste0("1.", parse_number(get(paste0("m", i, "free"))), ")\\*x", parse_number(get(paste0("m", i, "free")))),
-                                                                                                      paste0("2.", parse_number(get(paste0("m", i, "free"))), ")\\*x", parse_number(get(paste0("m", i, "free")))),
-                                                                                                      ref_syntax),
-                                                ifelse(str_detect(get(paste0("m", i, "free")), " ~"), gsub(paste0("1.", parse_number(get(paste0("m", i, "free"))), ")\\*1"),
-                                                                                       paste0("2.", parse_number(get(paste0("m", i, "free"))), ")\\*1"),
-                                                                                       ref_syntax), warning(paste0("syntax error found with", get(paste0("m", i, "free")))))))
+    # Old code, which only freed the intercept or the loading, but not both
+    # assign(paste0("mg", i + 1, "_syntax"), ifelse(str_detect(get(paste0("m", i, "free")), " =~ "), gsub(paste0("1.", parse_number(get(paste0("m", i, "free"))), ")\\*x", parse_number(get(paste0("m", i, "free")))),
+    #                                                                                                   paste0("2.", parse_number(get(paste0("m", i, "free"))), ")\\*x", parse_number(get(paste0("m", i, "free")))),
+    #                                                                                                   ref_syntax),
+    #                                             ifelse(str_detect(get(paste0("m", i, "free")), " ~"), gsub(paste0("1.", parse_number(get(paste0("m", i, "free"))), ")\\*1"),
+    #                                                                                    paste0("2.", parse_number(get(paste0("m", i, "free"))), ")\\*1"),
+    #                                                                                    ref_syntax), warning(paste0("syntax error found with", get(paste0("m", i, "free")))))))
     
+    # Updated code, which frees both the intercept and loading of an item simultaneously if either its intercept or loading has evidence of DIF.
+    assign(paste0("mg", i + 1, "_syntax"), 
+           gsub(paste0("1.", parse_number(get(paste0("m", i, "free"))), ")\\*x", parse_number(get(paste0("m", i, "free")))),
+                paste0("2.", parse_number(get(paste0("m", i, "free"))), ")\\*x", parse_number(get(paste0("m", i, "free")))), gsub(paste0("1.", parse_number(get(paste0("m", i, "free"))), ")\\*1"),
+                                                                                                                                  paste0("2.", parse_number(get(paste0("m", i, "free"))), ")\\*1"),
+                                                                                                                                  ref_syntax)))
     
     assign(paste0("m", i + 1),
            cfa(get(paste0("mg", i + 1, "_syntax")), 
@@ -514,11 +525,31 @@ mg_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", 
     
     assign(paste0("pval", i + 1), get(paste0("m", i, "ts"))$p.value)
     
+    adj_factor_scores <- lavPredict(get(paste0("m", i + 1)), se = "standard", assemble = TRUE)
+    adj_factor_scores$se <- as.numeric(attr(lavPredict(get(paste0("m", i + 1)), se = "standard"), "se")[[1]])
+    names(adj_factor_scores) <- c("adj_cog_fs", "group", "adj_cog_fs_se")
+    cn_factor_scores <- bind_cols(unadj_factor_scores, adj_factor_scores %>% select(-group)) %>%
+      mutate(fs_diff = unadj_cog_fs - adj_cog_fs,
+             pooled_se = sqrt(unadj_cog_fs_se * adj_cog_fs_se),
+             scaled_diff = fs_diff / pooled_se,
+             diff_gt_03 = abs(fs_diff) > 0.3,
+             diff_gt_1se = abs(scaled_diff) > 1)
+    
+    
     temp <- data.frame(candidate_item = paste0("x", parse_number(get(paste0("m", i, "free")))),
-                       par_type = ifelse(str_detect(get(paste0("m", i, "free")), " =~ "), "Loading",
-                                                     ifelse(str_detect(get(paste0("m", i, "free")), " ~"), "Intercept", 
-                                                            warning(paste0("syntax error found with", get(paste0("m", i, "free")))))),
-                       p = round(get(paste0("pval", i + 1)), 4))
+                       # par_type = ifelse(str_detect(get(paste0("m", i, "free")), " =~ "), "Loading",
+                       #                               ifelse(str_detect(get(paste0("m", i, "free")), " ~"), "Intercept", 
+                       #                                      warning(paste0("syntax error found with", get(paste0("m", i, "free")))))),
+                       p = round(get(paste0("pval", i + 1)), 4),
+                       salient_diff_pct_03 = sum_(cn_factor_scores$diff_gt_03) / length(cn_factor_scores$diff_gt_03),
+                       salient_diff_pct_1se = sum_(cn_factor_scores$diff_gt_1se) / length(cn_factor_scores$diff_gt_1se),
+                       salient_diff_pct_03_rg = sum_(cn_factor_scores$diff_gt_03[cn_factor_scores$group == "Reference"]) / length(cn_factor_scores$diff_gt_03[cn_factor_scores$group == "Reference"]),
+                       salient_diff_pct_1se_rg = sum_(cn_factor_scores$diff_gt_1se[cn_factor_scores$group == "Reference"]) / length(cn_factor_scores$diff_gt_1se[cn_factor_scores$group == "Reference"]),
+                       salient_diff_pct_03_fg = sum_(cn_factor_scores$diff_gt_03[cn_factor_scores$group == "Focal"]) / length(cn_factor_scores$diff_gt_03[cn_factor_scores$group == "Focal"]),
+                       salient_diff_pct_1se_fg = sum_(cn_factor_scores$diff_gt_1se[cn_factor_scores$group == "Focal"]) / length(cn_factor_scores$diff_gt_1se[cn_factor_scores$group == "Focal"]))
+    
+    
+    
     if(i == 0) {
       results_df <- temp
     } else {
@@ -528,6 +559,8 @@ mg_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", 
     i <- i + 1
     if(i == ncol(data)) pval <- 1
   }
+  
+  
   return(results_df)
 }
 
@@ -586,9 +619,9 @@ sim_dif_detection <- function(iter,
   #          type = "cn")
   
   dif_continuous <- mg_dif(config_model = model_syntax,
-                              data = samp_data_npsy,
-                              grp = "group",
-                              dif_alpha = .01) %>%
+                           data = samp_data_npsy,
+                           grp = "group",
+                           dif_alpha = .01) %>%
     bind_rows(data.frame(candidate_item = paste0("x", 1:n_items),
                          p = NA)) %>%
     distinct(candidate_item, .keep_all = TRUE) %>%
@@ -630,6 +663,11 @@ sim_dif_detection <- function(iter,
                                   invariance = c(paste0("x", 1:n_items, "_", suffix), "free_mean", "free_var"),
                                   verbose = FALSE)
     
+    assign(paste0(suffix, "_unadj_factor_scores"), fscores(mg_mod, full.scores.SE = TRUE) %>%
+             as_tibble() %>%
+             bind_cols(samp_data_recoded %>% select(group)) %>%
+             set_names(c("unadj_cog_fs", "unadj_cog_fs_se", "group")))
+    
     cat("DIF with MIRT - ", suffix, "\n\n")
     
     # DIF testing (constrained baseline model, iteratively remove anchor items)
@@ -642,15 +680,56 @@ sim_dif_detection <- function(iter,
                          verbose = FALSE,
                          max_run = n_items)
     
-    assign(paste0("dif_results_", suffix), dif_mod %>%
-             mutate(candidate_item = rownames(.)) %>%
-             bind_rows(data.frame(candidate_item = paste0("x", 1:n_items, "_", suffix),
-                                  p = NA)) %>%
-             distinct(candidate_item, .keep_all = TRUE) %>%
-             mutate(DIF = case_when(p < dif_alpha ~ 1,
-                                    p >= dif_alpha ~ 0,
-                                    is.na(p) ~ 0),
-                    type = suffix))
+    if(nrow(dif_mod) > 0) {
+      dif_mod_ret <- mirt::DIF(mg_mod, 
+                               which.par = coef(mg_mod, simplify = TRUE)$Reference$items %>% attr(., "dimnames") %>% purrr::pluck(2),
+                               items2test = paste0("x", 1:n_items, "_", suffix),
+                               scheme = "drop_sequential",
+                               seq_stat = dif_alpha,
+                               technical = list(NCYCLES = 50000),
+                               verbose = FALSE,
+                               max_run = n_items,
+                               return_seq_model = TRUE)
+      
+      assign(paste0(suffix, "_adj_factor_scores"), fscores(dif_mod_ret, full.scores.SE = TRUE) %>%
+               as_tibble() %>%
+               bind_cols(samp_data_recoded %>% select(group)) %>%
+               set_names(c("adj_cog_fs", "adj_cog_fs_se", "group")))
+      
+      assign(paste0(suffix, "_factor_scores"),  bind_cols(get(paste0(suffix, "_unadj_factor_scores")), get(paste0(suffix, "_adj_factor_scores")) %>% select(-group)) %>%
+               mutate(fs_diff = unadj_cog_fs - adj_cog_fs,
+                      pooled_se = sqrt(unadj_cog_fs_se * adj_cog_fs_se),
+                      scaled_diff = fs_diff / pooled_se,
+                      diff_gt_03 = abs(fs_diff) > 0.3,
+                      diff_gt_1se = abs(scaled_diff) > 1))
+      
+      assign(paste0("dif_results_", suffix), dif_mod %>%
+               mutate(candidate_item = rownames(.)) %>%
+               bind_rows(data.frame(candidate_item = paste0("x", 1:n_items, "_", suffix),
+                                    p = NA)) %>%
+               distinct(candidate_item, .keep_all = TRUE) %>%
+               mutate(DIF = case_when(p < dif_alpha ~ 1,
+                                      p >= dif_alpha ~ 0,
+                                      is.na(p) ~ 0),
+                      type = suffix, 
+                      salient_diff_pct_03 = sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_03) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_03),
+                      salient_diff_pct_1se = sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_1se) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_1se),
+                      salient_diff_pct_03_rg = sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_03[get(paste0(suffix, "_factor_scores"))$group == "Reference"]) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_03[get(paste0(suffix, "_factor_scores"))$group == "Reference"]),
+                      salient_diff_pct_1se_rg = sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_1se[get(paste0(suffix, "_factor_scores"))$group == "Reference"]) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_1se[get(paste0(suffix, "_factor_scores"))$group == "Reference"]),
+                      salient_diff_pct_03_fg = sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_03[get(paste0(suffix, "_factor_scores"))$group == "Focal"]) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_03[get(paste0(suffix, "_factor_scores"))$group == "Focal"]),
+                      salient_diff_pct_1se_fg = sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_1se[get(paste0(suffix, "_factor_scores"))$group == "Focal"]) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_1se[get(paste0(suffix, "_factor_scores"))$group == "Focal"])))
+    } else {
+      
+      assign(paste0("dif_results_", suffix), dif_mod %>%
+               mutate(candidate_item = rownames(.)) %>%
+               bind_rows(data.frame(candidate_item = paste0("x", 1:n_items, "_", suffix),
+                                    p = NA)) %>%
+               distinct(candidate_item, .keep_all = TRUE) %>%
+               mutate(DIF = case_when(p < dif_alpha ~ 1,
+                                      p >= dif_alpha ~ 0,
+                                      is.na(p) ~ 0),
+                      type = suffix))
+    }
   }
   
   dif_results <- rbindlist(mget(paste0("dif_results_", suffixes)), fill = TRUE) %>%
@@ -674,7 +753,7 @@ log_file <- "sim_dif_log.txt"
 test1 <- sim_dif_detection(iter = 31)
 
 iter_start <- 1
-nsims <- 500
+nsims <- 20
 iter_end <- iter_start + nsims - 1
 
 test2 <- Map(sim_dif_detection, iter = iter_start:iter_end)
