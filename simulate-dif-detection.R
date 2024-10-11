@@ -278,10 +278,10 @@ pop_data_npsy %>%
   ggplot(aes(x = score, fill = group)) +
   geom_histogram(position = "dodge", binwidth = 1) +
   facet_wrap(~item, ncol = 5, scales = "free")
-  
+
 pop_cfa_npsy <- cfa(cfa_1f, data = pop_data_npsy, estimator = "mlr", group = "group",
-    std.lv = TRUE,
-    group.equal = c("loadings", "intercepts"))
+                    std.lv = TRUE,
+                    group.equal = c("loadings", "intercepts"))
 
 summary(pop_cfa_npsy, fit.measures = TRUE, standardized = TRUE)
 
@@ -406,7 +406,7 @@ rm(equal_frequency_recoding, equal_interval_recoding, kmeans_recoding)
 ## Automated MIMIC modeling for DIF detection ------------------------------
 
 
-mimic_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", dif_alpha = .05) {
+mimic_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", dif_alpha = .01) {
   
   mimic0_syntax <- paste0(config_model, "\n cog ~ ", grp, "\n ", paste0("x", 1:(ncol(data) - 1), " ~ 0*", grp, collapse = "\n"))
   
@@ -421,7 +421,7 @@ mimic_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group
       filter(rhs == grp) %>%
       slice(1) %>%
       pull(lhs)
-
+    
     assign(paste0("m", i, "mi"), modindices(ref, sort. = TRUE) %>%
              filter(rhs == grp) %>%
              slice(1) %>%
@@ -435,7 +435,7 @@ mimic_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group
                estimator = "mlr", 
                std.lv = TRUE)
     )
-
+    
     assign(paste0("pval", i + 1), anova(ref, get(paste0("m", i + 1)))$`Pr(>Chisq)`[2])
     
     temp <- data.frame(candidate_item = get(paste0("m", i, "mi")),
@@ -455,6 +455,83 @@ mimic_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group
 # mimic_dif()
 
 
+mg_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", dif_alpha = .01) {
+  
+  mg0_syntax <- paste0(config_model, "\n ", paste0("x", 1:(ncol(data) - 1), " ~ c(ig1.", 1:(ncol(data) - 1), ", ig1.", 1:(ncol(data) - 1), ")*1", collapse = "\n"))
+  
+  mg0_syntax <- gsub("=~ NA\\*", "=~ c(lg1.1, lg1.1)*", mg0_syntax)
+  
+  for(itno in 2:(str_count(config_model, "\\+") + 1)) {
+    mg0_syntax <- gsub(paste0("\\+ x", itno), paste0("\\+ c(lg1.", itno, ", lg1.", itno, ")*x", itno), mg0_syntax)
+  }
+  
+  mg0_syntax <- paste0(mg0_syntax, "\n cog ~~ c(1, NA)*cog \n cog ~ c(0, NA)*1", collapse = "\n")
+  
+  m0 <- cfa(mg0_syntax, data = data, estimator = "mlr", std.lv = TRUE, group = "group")
+  
+  i <- 0
+  pval <- 0
+  
+  while(pval < dif_alpha) {
+    ref <- get(paste0("m", i))
+    ref_syntax <- get(paste0("mg", i, "_syntax"))
+    
+    # ts_i <- lavTestScore(ref)$uni %>%
+    #   data.frame() %>%
+    #   arrange(p.value) %>%
+    #   mutate(adj.p = p.adjust(p.value, method = p.method)) %>%
+    #   slice(1) %>%
+    #   pull(lhs)
+    
+    modindices(ref)
+    
+    assign(paste0("m", i, "ts"), lavTestScore(ref)$uni %>%
+             data.frame() %>%
+             arrange(p.value) %>%
+             slice(1) %>%
+             select(lhs, p.value))
+    
+    assign(paste0("m", i, "free"), partable(ref) %>%
+             filter(plabel == get(paste0("m", i, "ts"))$lhs) %>%
+             mutate(code = paste(lhs, op, rhs)) %>%
+             pull(code))
+    
+    assign(paste0("mg", i + 1, "_syntax"), ifelse(str_detect(get(paste0("m", i, "free")), " =~ "), gsub(paste0("1.", parse_number(get(paste0("m", i, "free"))), ")\\*x", parse_number(get(paste0("m", i, "free")))),
+                                                                                                      paste0("2.", parse_number(get(paste0("m", i, "free"))), ")\\*x", parse_number(get(paste0("m", i, "free")))),
+                                                                                                      ref_syntax),
+                                                ifelse(str_detect(get(paste0("m", i, "free")), " ~"), gsub(paste0("1.", parse_number(get(paste0("m", i, "free"))), ")\\*1"),
+                                                                                       paste0("2.", parse_number(get(paste0("m", i, "free"))), ")\\*1"),
+                                                                                       ref_syntax), warning(paste0("syntax error found with", get(paste0("m", i, "free")))))))
+    
+    
+    assign(paste0("m", i + 1),
+           cfa(get(paste0("mg", i + 1, "_syntax")), 
+               data = data, 
+               estimator = "mlr", 
+               std.lv = TRUE,
+               group = "group")
+    )
+    
+    assign(paste0("pval", i + 1), get(paste0("m", i, "ts"))$p.value)
+    
+    temp <- data.frame(candidate_item = paste0("x", parse_number(get(paste0("m", i, "free")))),
+                       par_type = ifelse(str_detect(get(paste0("m", i, "free")), " =~ "), "Loading",
+                                                     ifelse(str_detect(get(paste0("m", i, "free")), " ~"), "Intercept", 
+                                                            warning(paste0("syntax error found with", get(paste0("m", i, "free")))))),
+                       p = round(get(paste0("pval", i + 1)), 4))
+    if(i == 0) {
+      results_df <- temp
+    } else {
+      results_df <- bind_rows(results_df, temp)
+    }
+    pval <- get(paste0("pval", i + 1))
+    i <- i + 1
+    if(i == ncol(data)) pval <- 1
+  }
+  return(results_df)
+}
+
+#mg_dif()
 
 # DIF detection ---------------------------------------------------------
 
@@ -466,7 +543,7 @@ sim_dif_detection <- function(iter,
                               model_partable = pop_cfa_model, 
                               recoding_scheme = all_recoding_schemes, 
                               min_cell = 10, 
-                              dif_alpha = .05) {
+                              dif_alpha = .01) {
   
   require(lavaan)
   require(dplyr)
@@ -494,19 +571,33 @@ sim_dif_detection <- function(iter,
   #     group.equal = c("loadings", "intercepts")) %>%
   #   summary(fit.measures = TRUE, standardized = TRUE)
   
-  cat("MIMIC model \n\n")
+  cat("Continuous model \n\n")
   
-  dif_continuous <- mimic_dif(config_model = model_syntax,
+  # dif_continuous <- mimic_dif(config_model = model_syntax,
+  #                             data = samp_data_npsy,
+  #                             grp = "group",
+  #                             dif_alpha = .05) %>%
+  #   bind_rows(data.frame(candidate_item = paste0("x", 1:n_items),
+  #                        p = NA)) %>%
+  #   distinct(candidate_item, .keep_all = TRUE) %>%
+  #   mutate(DIF = case_when(p < dif_alpha ~ 1,
+  #                          p >= dif_alpha ~ 0,
+  #                          is.na(p) ~ 0),
+  #          type = "cn")
+  
+  dif_continuous <- mg_dif(config_model = model_syntax,
                               data = samp_data_npsy,
                               grp = "group",
-                              dif_alpha = .05) %>%
+                              dif_alpha = .01) %>%
     bind_rows(data.frame(candidate_item = paste0("x", 1:n_items),
                          p = NA)) %>%
     distinct(candidate_item, .keep_all = TRUE) %>%
-    mutate(DIF = case_when(p < .05 ~ 1,
-                           p >= .05 ~ 0,
+    mutate(DIF = case_when(p < dif_alpha ~ 1,
+                           p >= dif_alpha ~ 0,
                            is.na(p) ~ 0),
            type = "cn")
+  
+  
   
   for(suffix in suffixes) {
     
@@ -544,20 +635,20 @@ sim_dif_detection <- function(iter,
     # DIF testing (constrained baseline model, iteratively remove anchor items)
     dif_mod <- mirt::DIF(mg_mod, 
                          which.par = coef(mg_mod, simplify = TRUE)$Reference$items %>% attr(., "dimnames") %>% purrr::pluck(2),
-                   items2test = paste0("x", 1:n_items, "_", suffix),
-                   scheme = "drop_sequential",
-                   seq_stat = dif_alpha,
-                   technical = list(NCYCLES = 50000),
-                   verbose = FALSE,
-                   max_run = n_items)
+                         items2test = paste0("x", 1:n_items, "_", suffix),
+                         scheme = "drop_sequential",
+                         seq_stat = dif_alpha,
+                         technical = list(NCYCLES = 50000),
+                         verbose = FALSE,
+                         max_run = n_items)
     
     assign(paste0("dif_results_", suffix), dif_mod %>%
              mutate(candidate_item = rownames(.)) %>%
              bind_rows(data.frame(candidate_item = paste0("x", 1:n_items, "_", suffix),
                                   p = NA)) %>%
              distinct(candidate_item, .keep_all = TRUE) %>%
-             mutate(DIF = case_when(p < .05 ~ 1,
-                                    p >= .05 ~ 0,
+             mutate(DIF = case_when(p < dif_alpha ~ 1,
+                                    p >= dif_alpha ~ 0,
                                     is.na(p) ~ 0),
                     type = suffix))
   }
@@ -578,6 +669,8 @@ sim_dif_detection <- function(iter,
 
 # Run Simulations ---------------------------------------------------------
 
+log_file <- "sim_dif_log.txt"
+
 test1 <- sim_dif_detection(iter = 31)
 
 iter_start <- 1
@@ -592,7 +685,7 @@ plan(multisession, workers = 4)
 # Enable progress reporting
 handlers(global = TRUE)
 
-log_file <- "sim_dif_log.txt"
+
 
 with_progress({
   p <- progressor(along = iter_start:iter_end)
@@ -614,7 +707,7 @@ plan(sequential)
 
 res2 <- test2 %>% 
   rbindlist(fill = TRUE)
-rm(test2)
+#rm(test2)
 #saveRDS(res2, "Output/res2.Rds")
 #res2 <- readRDS("Output/res2.Rds")
 
@@ -636,7 +729,7 @@ res2 %>%
          EI_vs_cont = DIF_pct_ei - DIF_pct_cn,
          KM_vs_cont = DIF_pct_km - DIF_pct_cn) %>%
   arrange(parse_number(candidate_item)) %>%
-  data.frame()
+  data.frame() 
 
 
 res2 %>%
