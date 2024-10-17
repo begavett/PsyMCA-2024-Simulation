@@ -6,7 +6,7 @@ require(ggplot2)
 # show size of environment objects
 # sort( sapply(ls(),function(x){object.size(get(x))})) 
 
-# rm(list = ls()[grepl("^fit",ls())])
+# rm(list = ls()[grepl("^re",ls())])
 
 
 
@@ -408,6 +408,244 @@ simulateTrajectories <- function(true_sim, a_par, d_par, item_labels,
     saveRDS(fe_tics, file = paste0(out_dir,"fe_tics", ".rds"))
     saveRDS(fe_hcap, file = paste0(out_dir,"fe_hcap", ".rds"))
     saveRDS(fe_all, file = paste0(out_dir,"fe_all", ".rds"))
+    
+    
+    # return(list("ds" = ds, "re_all" = re_all, "re_mmse" = re_mmse,
+    #     "re_tics" = re_tics, "re_hcap" = re_hcap))
+}
+
+
+simulateTrajectories2 <- function(item_labels, niter = 20, iter_group = 5,
+        in_dir = "Analysis/Simulation Results/",
+        out_dir = "Analysis/Simulation Results/",
+        frml = "true_cog ~ time + (1 | id)") {
+    require(mirt)
+    require(tidyverse)
+    for (itgrp in 1:iter_group) {
+        ds <- list()
+        re_tics3 <- list()
+        re_tics10 <- list()
+        re_tics13 <- list()
+        re_tics16 <- list()
+        fe_tics3 <- list()
+        fe_tics10 <- list()
+        fe_tics13 <- list()
+        fe_tics16 <- list()
+        set.seed(092724)
+        for (iter in 1:niter) {
+            cat(paste0("Group - ",itgrp, ", Iteration - ",iter,"\n"))
+            
+            #  load simulated item responses
+            iteration <- ((itgrp - 1) * niter) + iter
+            df <- readRDS(paste0(in_dir,"ds_iteration_group_",itgrp,".rds"))[[iter]]
+            df <- df %>% dplyr::select(c(id:true_cog,agebl_75:slope_true_qrtl,any_of(item_labels)))
+            
+            # ds_iteration_group_36.rds
+            # 
+            # df <- data.frame(simdata(a = a_par, d = d_par, Theta = true_sim[,paste0("vm",iteration)], 
+            #                          itemtype = 'graded'))
+            # names(df) <- item_labels
+            # df$id <- true_sim$id
+            # df$time <- true_sim$time
+            # df$agebl_75 <- true_sim$agebl_75
+            # df$true_cog <- true_sim[,paste0("vm",iteration)]
+            # df$iteration <- iteration
+            # df <- df %>% relocate(c(id,iteration,time,true_cog))
+            
+            # # true random effect intercept and slope - from calculate_re_true.R 
+            # true_re <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/true_random_effects.rds")
+            # df <- df %>% left_join((true_re %>% dplyr::select(id,int_true_qrtl,
+            #                                                   slope_true_qrtl)),by="id")
+            # 
+            # flag_low_response <- FALSE
+            # for (itnm in item_labels) {
+            #     if (length(table(df[,itnm])) < 2) {
+            #         flag_low_response <- TRUE
+            #     }
+            # }
+            # if (flag_low_response == TRUE) {
+            #     iter = iter - 1
+            #     next
+            # }
+            
+            # mirt_models for cognition measures
+            
+            # mirt_mmse <- "mmse = 1-11"
+            # mirt_tics <- "tics = 1-8"
+            # mirt_hcap <- "hcap = 1-18"
+            # mirt_all <- "cog = 1-37"
+
+            mirt_tics3 <- "tics3 = 1-6"
+            mirt_tics10 <- "tics10 = 1-7"
+            mirt_tics13 <- "tics13 = 1-8"
+            mirt_tics16 <- "tics16 = 1-10"
+            
+            ### estimate mirt model using simulated responses and generate factor scores
+            # create empty re dataframe to return if error in generation
+            re_empty <- data.frame(id = NA, int_true = NA, slope_true = NA, 
+                                   int_true_se = NA,slope_true_se = NA, int_sim = NA, slope_sim = NA, 
+                                   int_sim_se = NA, slope_sim_se = NA)
+            
+            tryCatch({
+                mod <- mirt(df[,item_labels[c(1:3,6:8)]], mirt_tics3)
+                df$sim_cog_tics3 <- fscores(mod)
+                mod <- mirt(df[,item_labels[c(1:3,5:8)]], mirt_tics10)
+                df$sim_cog_tics10 <- fscores(mod)
+                mod <- mirt(df[,item_labels[1:8]], mirt_tics13)
+                df$sim_cog_tics13 <- fscores(mod)
+                mod <- mirt(df[,item_labels[1:10]], mirt_tics16)
+                df$sim_cog_tics16 <- fscores(mod)
+                df <- df %>% 
+                    relocate(c(sim_cog_tics3,sim_cog_tics10,sim_cog_tics13,sim_cog_tics16), 
+                        .after = true_cog)
+            }, error=function(e){return(re_empty)})
+            
+            # rescale factor scores to equate metric to true cognition
+            df <- df %>% mutate(
+                sim_cog_tics3_rs = (((sim_cog_tics3 - mean(sim_cog_tics3)) / 
+                    sd(sim_cog_tics3)) * sd(true_cog)) + mean(true_cog),
+                sim_cog_tics10_rs = (((sim_cog_tics10 - mean(sim_cog_tics10)) / 
+                    sd(sim_cog_tics10)) * sd(true_cog)) + mean(true_cog),
+                sim_cog_tics13_rs = (((sim_cog_tics13 - mean(sim_cog_tics13)) / 
+                    sd(sim_cog_tics13)) * sd(true_cog)) + mean(true_cog),
+                sim_cog_tics16_rs = (((sim_cog_tics16 - mean(sim_cog_tics16)) / 
+                    sd(sim_cog_tics16)) * sd(true_cog)) + mean(true_cog),
+            )
+            
+            ### calculate simulated random effects
+            
+            # frml <- as.formula(frml)
+            # frml <- as.formula("true_cog ~ time + (1 | id)")
+            # frml <- "true_cog ~ time + agebl_75 + slope_true_qrtl +
+            #     time:agebl_75 + time:slope_true_qrtl + (1 + time | id)"
+            
+            # TICS3
+            res <- simTraj(data = df, sim_cog_var = "sim_cog_tics3_rs",frml = frml,
+                iteration = iteration)
+            df <- res[[1]]
+            df <- df %>% rename(cog_true_pred_tics3 = cog_true_pred,
+                cog_sim_pred_tics3 = cog_sim_pred)
+            re <- res[[2]]
+            re$label <- "TICS3"
+            re_tics3[[paste0("iteration-",iteration)]] <- re
+            fe <- res[[3]]
+            fe$label <- "TICS3"
+            fe_tics3[[paste0("iteration-",iteration)]] <- fe
+            
+            # TICS10
+            res <- simTraj(data = df, sim_cog_var = "sim_cog_tics10_rs",frml = frml,
+                iteration = iteration)
+            df <- res[[1]]
+            df <- df %>% rename(cog_true_pred_tics10 = cog_true_pred,
+                cog_sim_pred_tics10 = cog_sim_pred)
+            re <- res[[2]]
+            re$label <- "TICS10"
+            re_tics10[[paste0("iteration-",iteration)]] <- re
+            fe <- res[[3]]
+            fe$label <- "TICS10"
+            fe_tics10[[paste0("iteration-",iteration)]] <- fe
+            
+            # TICS13
+            res <- simTraj(data = df, sim_cog_var = "sim_cog_tics13_rs",frml = frml,
+                           iteration = iteration)
+            df <- res[[1]]
+            df <- df %>% rename(cog_true_pred_tics13 = cog_true_pred,
+                cog_sim_pred_tics13 = cog_sim_pred)
+            re <- res[[2]]
+            re$label <- "TICS13"
+            re_tics13[[paste0("iteration-",iteration)]] <- re
+            fe <- res[[3]]
+            fe$label <- "TICS13"
+            fe_tics13[[paste0("iteration-",iteration)]] <- fe
+            
+            # TICS16
+            res <- simTraj(data = df, sim_cog_var = "sim_cog_tics16_rs",frml = frml,
+                iteration = iteration)
+            df <- res[[1]]
+            df <- df %>% rename(cog_true_pred_tics16 = cog_true_pred,
+                cog_sim_pred_tics16 = cog_sim_pred)
+            re <- res[[2]]
+            re$label <- "TICS16"
+            re_tics16[[paste0("iteration-",iteration)]] <- re
+            fe <- res[[3]]
+            fe$label <- "TICS16"
+            fe_tics16[[paste0("iteration-",iteration)]] <- fe
+            
+            ds[[paste0("iteration-",iteration)]] <- df
+            
+            
+        } # end for iter
+        
+        saveRDS(ds, file = paste0(out_dir,"ds_iteration_group_", itgrp, ".rds"))
+        saveRDS(re_tics3, file = paste0(out_dir,"re_tics3_iteration_group_", itgrp, ".rds"))
+        saveRDS(re_tics10, file = paste0(out_dir,"re_tics10_iteration_group_", itgrp, ".rds"))
+        saveRDS(re_tics13, file = paste0(out_dir,"re_tics13_iteration_group_", itgrp, ".rds"))
+        saveRDS(re_tics16, file = paste0(out_dir,"re_tics16_iteration_group_", itgrp, ".rds"))
+        saveRDS(fe_tics3, file = paste0(out_dir,"fe_tics3_iteration_group_", itgrp, ".rds"))
+        saveRDS(fe_tics10, file = paste0(out_dir,"fe_tics10_iteration_group_", itgrp, ".rds"))
+        saveRDS(fe_tics13, file = paste0(out_dir,"fe_tics13_iteration_group_", itgrp, ".rds"))
+        saveRDS(fe_tics16, file = paste0(out_dir,"fe_tics16_iteration_group_", itgrp, ".rds"))
+        
+    } # end for itgrp
+    
+    for (itgrp in 1:iter_group) {
+        if (itgrp == 1) {
+            re_tics3 <- readRDS(paste0(out_dir,"re_tics3_iteration_group_", itgrp, ".rds"))
+            re_tics3 <- re_tics3 %>% bind_rows()
+            re_tics10 <- readRDS(paste0(out_dir,"re_tics10_iteration_group_", itgrp, ".rds"))
+            re_tics10 <- re_tics10 %>% bind_rows()
+            re_tics13 <- readRDS(paste0(out_dir,"re_tics13_iteration_group_", itgrp, ".rds"))
+            re_tics13 <- re_tics13 %>% bind_rows()
+            re_tics16 <- readRDS(paste0(out_dir,"re_tics16_iteration_group_", itgrp, ".rds"))
+            re_tics16 <- re_tics16 %>% bind_rows()
+            
+            fe_tics3 <- readRDS(paste0(out_dir,"fe_tics3_iteration_group_", itgrp, ".rds"))
+            fe_tics3 <- fe_tics3 %>% bind_rows()
+            fe_tics10 <- readRDS(paste0(out_dir,"fe_tics10_iteration_group_", itgrp, ".rds"))
+            fe_tics10 <- fe_tics10 %>% bind_rows()
+            fe_tics13 <- readRDS(paste0(out_dir,"fe_tics13_iteration_group_", itgrp, ".rds"))
+            fe_tics13 <- fe_tics13 %>% bind_rows()
+            fe_tics16 <- readRDS(paste0(out_dir,"fe_tics16_iteration_group_", itgrp, ".rds"))
+            fe_tics16 <- fe_tics16 %>% bind_rows()
+            
+        } else {
+            re_tics3_temp <- readRDS(paste0(out_dir,"re_tics3_iteration_group_", itgrp, ".rds"))
+            re_tics3_temp <- re_tics3_temp %>% bind_rows()
+            re_tics3 <- bind_rows(re_tics3, re_tics3_temp)
+            re_tics10_temp <- readRDS(paste0(out_dir,"re_tics10_iteration_group_", itgrp, ".rds"))
+            re_tics10_temp <- re_tics10_temp %>% bind_rows()
+            re_tics10 <- bind_rows(re_tics10, re_tics10_temp)
+            re_tics13_temp <- readRDS(paste0(out_dir,"re_tics13_iteration_group_", itgrp, ".rds"))
+            re_tics13_temp <- re_tics13_temp %>% bind_rows()
+            re_tics13 <- bind_rows(re_tics13, re_tics13_temp)
+            re_tics16_temp <- readRDS(paste0(out_dir,"re_tics16_iteration_group_", itgrp, ".rds"))
+            re_tics16_temp <- re_tics16_temp %>% bind_rows()
+            re_tics16 <- bind_rows(re_tics16, re_tics16_temp)
+            
+            fe_tics3_temp <- readRDS(paste0(out_dir,"fe_tics3_iteration_group_", itgrp, ".rds"))
+            fe_tics3_temp <- fe_tics3_temp %>% bind_rows()
+            fe_tics3 <- bind_rows(fe_tics3, fe_tics3_temp)
+            fe_tics10_temp <- readRDS(paste0(out_dir,"fe_tics10_iteration_group_", itgrp, ".rds"))
+            fe_tics10_temp <- fe_tics10_temp %>% bind_rows()
+            fe_tics10 <- bind_rows(fe_tics10, fe_tics10_temp)
+            fe_tics13_temp <- readRDS(paste0(out_dir,"fe_tics13_iteration_group_", itgrp, ".rds"))
+            fe_tics13_temp <- fe_tics13_temp %>% bind_rows()
+            fe_tics13 <- bind_rows(fe_tics13, fe_tics13_temp)
+            fe_tics16_temp <- readRDS(paste0(out_dir,"fe_tics16_iteration_group_", itgrp, ".rds"))
+            fe_tics16_temp <- fe_tics16_temp %>% bind_rows()
+            fe_tics16 <- bind_rows(fe_tics16, fe_tics16_temp)
+            
+        }
+    }
+    saveRDS(re_tics3, file = paste0(out_dir,"re_tics3", ".rds"))
+    saveRDS(re_tics10, file = paste0(out_dir,"re_tics10", ".rds"))
+    saveRDS(re_tics13, file = paste0(out_dir,"re_tics13", ".rds"))
+    saveRDS(re_tics16, file = paste0(out_dir,"re_tics16", ".rds"))
+    
+    saveRDS(fe_tics3, file = paste0(out_dir,"fe_tics3", ".rds"))
+    saveRDS(fe_tics10, file = paste0(out_dir,"fe_tics10", ".rds"))
+    saveRDS(fe_tics13, file = paste0(out_dir,"fe_tics13", ".rds"))
+    saveRDS(fe_tics16, file = paste0(out_dir,"fe_tics16", ".rds"))
     
     
     # return(list("ds" = ds, "re_all" = re_all, "re_mmse" = re_mmse,
