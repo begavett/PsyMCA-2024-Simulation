@@ -1562,9 +1562,9 @@ r1$cog_sim_pred_tics_mn <- apply(r1[,names(r1)[grepl("sim_pred_tics", names(r1))
 r1$cog_sim_pred_tics_se <- apply(r1[,names(r1)[grepl("sim_pred_tics", names(r1))]], 1,
     function(x) sd(x, na.rm = TRUE))
 
-r1$cog_sim_pred_hcap_mn <- apply(r1[,names(r1)[grepl("sim_pred_all", names(r1))]], 1,
+r1$cog_sim_pred_hcap_mn <- apply(r1[,names(r1)[grepl("sim_pred_hcap", names(r1))]], 1,
     function(x) mean(x, na.rm = TRUE))
-r1$cog_sim_pred_hcap_se <- apply(r1[,names(r1)[grepl("sim_pred_all", names(r1))]], 1,
+r1$cog_sim_pred_hcap_se <- apply(r1[,names(r1)[grepl("sim_pred_hcap", names(r1))]], 1,
     function(x) sd(x, na.rm = TRUE))
 
 r2 <- r1 %>% dplyr::select(any_of(dat_cols),contains("_mn"),contains("_se")) %>% 
@@ -1710,7 +1710,13 @@ rm(r4,r4a,r5,r6,r7,r7a,r8,r8a,r9,r10)
 
 ```
 
-### Simulated Cognitive Trajectories versus True Cognition Trajectories - TICS Variants
+### Simple versus Blended Cognitive Trajectories - TICS variants
+
+- Simple trajectories are derived from mixed effects model predicted outcome values for a specific outcome.
+- Blended trajectories are derived from mixed effects model predicted outcome values for two outcomes, with the first outcome used for an initial number of assessments (0-5) and the second outcome for subsequent assessments (6-10).   
+
+
+Blended Results. Blending occurs after separate mixed effects models for each outcome are estimated. Plot 1 shows model predicted trajectories for each TICS variant measure. Plot 2 show model predicted trajectories for simple TICS3 and blended TICS3-TICS16.
 
 ```{r cog_traj_plots2, echo=TRUE, message = FALSE, warning = FALSE}
 
@@ -1831,14 +1837,178 @@ ggplot(data = r4, aes(x = time, y = mean_cog, color = slope_true_qrtl)) +
     geom_line() +
     geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
     facet_wrap(vars(cognitive_measure)) +
-    labs(caption = "True versus simulated cognitive trajectories (1000 Simulations) - All TICS Measures")
+    labs(caption = "Plot 1. True versus simulated cognitive trajectories (1000 Simulations) - All TICS Measures")
 
 
 ggplot(data = r4ta, aes(x = time, y = mean_cog, color = slope_true_qrtl,
       linetype = cognitive_measure)) +
     geom_line() +
     geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
-    labs(caption = str_wrap("TICS (wave 3) all assessments versus TICS (wave 3 - assessments bl-5) blended with TICS (wave 16 - assessments 6-10) (1000 Simulations)",width = 70))
+    labs(caption = str_wrap("Plot 2. TICS (wave 3) all assessments versus TICS (wave 3 - assessments bl-5) blended with TICS (wave 16 - assessments 6-10) (1000 Simulations)",width = 70))
+
+
+
+```
+
+Blended Data - Cognitive scores for different outcomes are blended and inputted into mixed effects models. 
+
+Blended Data. Blending of two cognitive measures into one outcome occurs before mixed effects model is estimated. Plot 1a shows model predicted trajectories for simple TICS measures and selected blended measures. Plot 2a shows model predicted trajectories for simple TICS3 and blended TICS3-TICS16.
+
+```{r cog_traj_plots3, echo=TRUE, message = FALSE, warning = FALSE}
+
+# prepare longitudinal data file
+
+out_dir <- "~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Analysis/Simulation Results/Temp/"
+dat_cols <- c("id","time","agebl_75","slope_true_qrtl","int_true_qrtl")
+res_cols <- c("cog_true_pred_tics3-tics13","cog_sim_pred_tics3-tics13",
+    "cog_sim_pred_tics3-tics3","cog_sim_pred_tics10-tics13",
+    "cog_sim_pred_tics10-tics10","cog_sim_pred_tics13-tics16",
+    "cog_sim_pred_tics13-tics13")
+
+
+r1 <- readRDS(paste0(out_dir,"model_predicted_trajectory_simulations.rds"))
+
+r1$cog_true_pred_mn <- apply(r1[,names(r1)[grepl("cog_true", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$cog_true_pred_se <- apply(r1[,names(r1)[grepl("cog_true", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+# summary(r1$cog_true_mn)
+r1$`cog_sim_pred_tics3-tics13_mn` <- apply(r1[,names(r1)[grepl("sim_pred_tics3-tics13", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$`cog_sim_pred_tics3-tics13_se` <- apply(r1[,names(r1)[grepl("sim_pred_tics3-tics13", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$`cog_sim_pred_tics3-tics3_mn` <- apply(r1[,names(r1)[grepl("sim_pred_tics3-tics3", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$`cog_sim_pred_tics3-tics3_se` <- apply(r1[,names(r1)[grepl("sim_pred_tics3-tics3", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$`cog_sim_pred_tics10-tics13_mn` <- apply(r1[,names(r1)[grepl("sim_pred_tics10-tics13", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$`cog_sim_pred_tics10-tics13_se` <- apply(r1[,names(r1)[grepl("sim_pred_tics10-tics13", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$`cog_sim_pred_tics10-tics10_mn` <- apply(r1[,names(r1)[grepl("sim_pred_tics10-tics10", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$`cog_sim_pred_tics10-tics10_se` <- apply(r1[,names(r1)[grepl("sim_pred_tics10-tics10", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$`cog_sim_pred_tics13-tics16_mn` <- apply(r1[,names(r1)[grepl("sim_pred_tics13-tics16", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$`cog_sim_pred_tics13-tics16_se` <- apply(r1[,names(r1)[grepl("sim_pred_tics13-tics16", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$`cog_sim_pred_tics13-tics13_mn` <- apply(r1[,names(r1)[grepl("sim_pred_tics13-tics13", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$`cog_sim_pred_tics13-tics13_se` <- apply(r1[,names(r1)[grepl("sim_pred_tics13-tics13", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$`cog_sim_pred_tics3-tics16_mn` <- apply(r1[,names(r1)[grepl("sim_pred_tics3-tics16", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$`cog_sim_pred_tics3-tics16_se` <- apply(r1[,names(r1)[grepl("sim_pred_tics3-tics16", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r1$`cog_sim_pred_tics16-tics16_mn` <- apply(r1[,names(r1)[grepl("sim_pred_tics16-tics16", names(r1))]], 1,
+    function(x) mean(x, na.rm = TRUE))
+r1$`cog_sim_pred_tics16-tics16_se` <- apply(r1[,names(r1)[grepl("sim_pred_tics16-tics16", names(r1))]], 1,
+    function(x) sd(x, na.rm = TRUE))
+
+r2 <- r1 %>% dplyr::select(any_of(dat_cols),contains("_mn"),contains("_se")) %>% 
+    mutate(age = agebl_75 + 75)
+# summary(r2$age)
+
+r3a <- r2 %>% dplyr::select(-c(cog_true_pred_se:`cog_sim_pred_tics16-tics16_se`)) %>% 
+    pivot_longer(cols = cog_true_pred_mn:`cog_sim_pred_tics16-tics16_mn`,
+        names_to = "label", values_to = "cog") %>% mutate(
+          label = sub("_mn$","",label)
+        )
+r3b <- r2 %>% dplyr::select(-c(cog_true_pred_mn:`cog_sim_pred_tics16-tics16_mn`)) %>% 
+    pivot_longer(cols = cog_true_pred_se:`cog_sim_pred_tics16-tics16_se`,
+        names_to = "label", values_to = "cog_se") %>% mutate(
+          label = sub("_se$","",label)
+        )
+
+r3 <- r3a %>% left_join((r3b %>% 
+    dplyr::select(id,time,label,cog_se)),by=c("id","time","label")) %>% 
+    mutate(
+        cognitive_measure = factor(case_when(
+            label == "cog_true_pred" ~ "True Cognition",
+            label == "cog_sim_pred_tics3-tics13" ~ "TICS3-TICS13",
+            label == "cog_sim_pred_tics3-tics3" ~ "TICS3",
+            label == "cog_sim_pred_tics10-tics13" ~ "TICS10-TICS13",
+            label == "cog_sim_pred_tics10-tics10" ~ "TICS10",
+            label == "cog_sim_pred_tics13-tics16" ~ "TICS13-TICS16",
+            label == "cog_sim_pred_tics13-tics13" ~ "TICS13",
+            label == "cog_sim_pred_tics3-tics16" ~ "TICS3-TICS16",
+            label == "cog_sim_pred_tics16-tics16" ~ "TICS16",
+        ), levels = c("True Cognition","TICS3-TICS13","TICS3","TICS10-TICS13",
+                "TICS10","TICS13-TICS16","TICS13","TICS3-TICS16","TICS16"))
+    )
+
+r4 <- r3 %>% group_by(time,slope_true_qrtl,cognitive_measure) %>% summarise(
+    mean_cog = mean(cog),
+    se_cog = mean(cog_se) / sqrt(1000)
+) %>% mutate(
+    lower = mean_cog - (1.96 * se_cog),
+    upper = mean_cog + (1.96 * se_cog),
+)
+
+r2ta <- r2 %>% dplyr::select(id,time,agebl_75,slope_true_qrtl,
+    `cog_sim_pred_tics3-tics3_mn`,`cog_sim_pred_tics3-tics16_mn`,
+    `cog_sim_pred_tics3-tics3_se`,`cog_sim_pred_tics3-tics16_se`) # %>%
+      # mutate(
+      #   cog_blend_mn = case_when(
+      #     time <= 5 ~ cog_sim_pred_tics3_mn,
+      #     time > 5 ~ cog_sim_pred_tics16_mn
+      #   ),
+      #   cog_blend_se = case_when(
+      #     time <= 5 ~ cog_sim_pred_tics3_se,
+      #     time > 5 ~ cog_sim_pred_tics16_se
+      #   )
+      # ) %>% relocate(cog_blend_mn, .after = cog_sim_pred_tics16_mn)
+
+r3taa <- r2ta %>% dplyr::select(-c(`cog_sim_pred_tics3-tics3_se`,`cog_sim_pred_tics3-tics16_se`)) %>% 
+    pivot_longer(cols = c(`cog_sim_pred_tics3-tics3_mn`,`cog_sim_pred_tics3-tics16_mn`),
+        names_to = "label", values_to = "cog") %>% mutate(
+          label = sub("_mn$","",label)
+        )
+r3tab <- r2ta %>% dplyr::select(-c(`cog_sim_pred_tics3-tics3_mn`,`cog_sim_pred_tics3-tics16_mn`)) %>% 
+    pivot_longer(cols = c(`cog_sim_pred_tics3-tics3_se`,`cog_sim_pred_tics3-tics16_se`),
+        names_to = "label", values_to = "cog_se") %>% mutate(
+          label = sub("_se$","",label)
+        )
+
+r3ta <- r3taa %>% left_join((r3tab %>% 
+    dplyr::select(id,time,label,cog_se)),by=c("id","time","label")) %>% 
+    mutate(
+        cognitive_measure = factor(case_when(
+            label == "cog_sim_pred_tics3-tics3" ~ "TICS (wave 3)",
+            label == "cog_sim_pred_tics3-tics16" ~ "Blended TICS (wave 3),TICS (wave 16)"
+        ), levels = c("Blended TICS (wave 3),TICS (wave 16)","TICS (wave 3)"))
+    )
+
+r4ta <- r3ta %>% group_by(time,slope_true_qrtl,cognitive_measure) %>% summarise(
+    mean_cog = mean(cog),
+    se_cog = mean(cog_se) / sqrt(1000)
+) %>% mutate(
+    lower = mean_cog - (1.96 * se_cog),
+    upper = mean_cog + (1.96 * se_cog),
+)
+
+rm(r2,r3,r3a,r3b,r2ta,r3ta,r3taa,r3tab)
+
+ggplot(data = r4, aes(x = time, y = mean_cog, color = slope_true_qrtl)) +
+    geom_line() +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
+    facet_wrap(vars(cognitive_measure)) +
+    labs(caption = "Plot 1a. True versus simulated cognitive trajectories (1000 Simulations) - All TICS Measures")
+
+
+ggplot(data = r4ta, aes(x = time, y = mean_cog, color = slope_true_qrtl,
+      linetype = cognitive_measure)) +
+    geom_line() +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width=.3, position=pd) +
+    labs(caption = str_wrap("Plot 2a. TICS (wave 3) all assessments versus TICS (wave 3 - assessments bl-5) blended with TICS (wave 16 - assessments 6-10) (1000 Simulations)",width = 70))
 
 
 

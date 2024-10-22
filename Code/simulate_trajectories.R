@@ -41,19 +41,21 @@ extractMIRTParm <- function(model,max_thresh = 9) {
 }
 
 
-#   simTraj is a function that 1) estimates a mirt model using a simulated
-#       item response dataset, 2) calculates factor scores based on the estimated 
-#       model, 3) estimates linear mixed effects models with true cognition and  
-#       simulated cognition (factor scores from simulated item responses) as dependent 
+#   simTraj is a function that inputs a simulated dataset and 1) estimates linear 
+#       mixed effects models with true cognition and simulated cognition 
+#       (factor scores from simulated item responses) as dependent 
 #       variables, time in study as a fixed effect variable, and person and 
-#       person-by-time random effects, and 4) returns person specific estimates 
-#       (random effects) of cognitive components slopes and intercepts.
+#       person-by-time random effects, and 2) returns model predicted estimates of the 
+#       dependent variable in the simulated dataset, person specific estimates 
+#       (random effects) of the cognitive measure slopes and intercepts, and
+#       fixed effects estimates from the model.
 #   Parameters
 #       data - data frame that contains true cognition value, simulated item responses, 
 #           id variable, and time in study variable
 #       sim_cog_var - label for variable within dataframe (data) for which 
 #           trajectories are being simulated
 #       frml - formula specification for (lmer) longitudinal mixed effects model
+#           passed from simulateTrajectories
 #       iteration = iteration number passed from simulateTrajectories
 #   Value - list with 3 elements:
 #       data - analytic dataframe (data) with longitudinal model predicted cognition 
@@ -131,354 +133,127 @@ simTraj <- function(data = df, sim_cog_var = "sim_cog_all", frml = frml,
 }
 
 #   simulateTrajectories is a function that 1) simulates item responses for 
-#   true cognition vectors for different components of the HRS-HCAP cognitive test
-#   battery (MMSE, HRS TICS, HCAP, MMSE+TICS+HCAP), and 2) generates simulated observed (factor)
-#   scores for each of the cognitive components (simTraj()), 3) estimates linear mixed effects models
+#   true cognition vectors for different measures derived from the HRS-HCAP cognitive test
+#   battery (MMSE, HRS TICS, HCAP, MMSE+TICS+HCAP), 2) generates simulated observed (factor)
+#   scores for each of the cognitive measures, 3) estimates linear mixed effects models
 #   with true cognition and simulated cognition (factor scores from simulated item responses)
 #   as dependent variables, time in study as a fixed effect variable, and person and 
-#   person-by-time random effects (simTraj()), 4) collates person specific estimates (random effects)
-#   of cognitive components slopes and intercepts.
-# 
+#   person-by-time random effects (simTraj()), 4) collates and outputs simulated datasets
+#   that include simulated item level responses and factor scores, random effects,
+#   and fixed effects from mixed effects models.
+#   Up to 10 cognitive measures can be processed in each run.
+#
 #   Parameters
-#       true_sim - data frame with true cognition values, rows correspond to assessments,
-#           columns correspond to simulation iterations.
-#       a_par - vector/data frame containing a (discrimination) item parameters 
-#           from mirt co-calibration model
-#       d_par - vector/data frame containing d (threshhold) item parameters 
-#           from mirt co-calibration model
-#       item_labels - item labels
 #       iter_group - number of groups of (niter) iterations
 #       niter - number of simulation iterations within iteration groups
+#       item_labels - vector that contains variable names of superset of items that occur 
+#           in any of the simulated measures (union of items across simulated measures)
+#       * vectors with mirt design parameters (must have the same number of elements)
+#           models - vector, each element contains mirt model syntax for one simulated measure
+#               e.g. "dv1 = 1:5"
+#           dv_labels - vector, each element contains factor label for one simulated measure
+#               e.g. "dv1"
+#           items - vector, each element is a vector that contains item numbers
+#               (corresponding to item_labels) for one simulated measure 
+#               e.g. "c(1:3,4,7)"
+#       in_dir - path to directory for input of previously generated simulated
+#           item response datasets. if is.null(in_dir) item responses will be simulated
+#           using true_sim, a_par, and d_par
+#       * required if is.null(in_dir):
+#           true_sim - data frame with true cognition values, rows correspond to assessments,
+#               columns correspond to simulation iterations.
+#           a_par - vector/data frame containing a (discrimination) item parameters 
+#               from mirt co-calibration model
+#           d_par - vector/data frame containing d (threshhold) item parameters 
+#               from mirt co-calibration model
 #       out_dir - path to directory for output of simulation results
 #       frml - formula specification for (lmer) longitudinal mixed effects model
+#           e.g. "true_cog ~ time + (1 + time | id)"
 #
 #   Value - Saves lists of results to out_dir - there is a file for each iter_group 
-#       that contains niter elements:
-#       ds - list of datasets for each niter simulations. Each dataset contains
-#           the true cognition value (true_cog), the simulated item responses conditional
-#           on true_cog, simulated item response data and cognition factor scores, 
+#       that contains a list with niter elements. There are also files that merge
+#       random effects and fixed effects across iterations. These files contain granular
+#       results from the simulations and can be individually and cumulatively large.
+#
+#       ds_iteration_group_<iter_group number> - list of datasets for each of the 
+#           niter simulations. Each dataset contains the true cognition value (true_cog), 
+#           the simulated item responses conditional on true_cog, cognition factor scores, 
 #           and longitudinal mixed effect model predicted cognition values for each simulated
-#           assessment. Measures include MMSE, TICS, HCAP, and MMSE+TICS+HCAP.
-#       re_all - estimated random effects for the full HRS-HCAP cognitive test battery
-#           (MMSE+TICS+HCAP). Includes intercept and slope random effects for true
+#           measure specified in dv_labels. Can be large.
+#       re_<dv>_iteration_group_<iter_group number> - list of estimated random effects 
+#           for each of the niter simulations  for each simulated measure specified 
+#           in dv_labels. Includes intercept and slope random effects for 
 #           cognition (_true) and simulated cognition factor scores (_sim)
-#       re_mmse - estimated random effects for the MMSE component of the HRS-HCAP 
-#           cognitive test battery. Includes intercept and slope random effects for true
-#           cognition (_true) and simulated cognition factor scores (_sim)
-#       re_tics - estimated random effects for the TICS component of the HRS-HCAP 
-#           cognitive test battery. Includes intercept and slope random effects for true
-#           cognition (_true) and simulated cognition factor scores (_sim)
-#       re_hcap - estimated random effects for the HCAP component of the HRS-HCAP 
-#           cognitive test battery. Includes intercept and slope random effects for true
-#           cognition (_true) and simulated cognition factor scores (_sim)
-#       fe_all - estimated fixed effects for mixed effect model of cognition measured 
-#           by full HRS-HCAP cognitive test battery (MMSE+TICS+HCAP). 
-#           Includes intercept and slope random effects for true
+#       fe_<dv>_iteration_group_<iter_group number> - list of estimated fixed effects 
+#           for each of the niter simulations for each simulated measure specified in dv_labels.
+#       re_<dv> - dataframe that contains random effects from all of the iterations
+#           (iter_group * niter) for specified simulated measure (dv). 
+#           Includes intercept and slope random effects for 
 #           cognition (_true) and simulated cognition factor scores (_sim).
-#       fe_mmse - estimated fixed effects for mixed effect model of cognition measured 
-#           by MMSE. 
-#           Includes intercept and slope random effects for true
-#           cognition (_true) and simulated cognition factor scores (_sim).
-#       fe_tics - estimated fixed effects for mixed effect model of cognition measured 
-#           by TICS. 
-#           Includes intercept and slope random effects for true
-#           cognition (_true) and simulated cognition factor scores (_sim).
-#       fe_hcap - estimated fixed effects for mixed effect model of cognition measured 
-#           by HCAP. 
-#           Includes intercept and slope random effects for true
-#           cognition (_true) and simulated cognition factor scores (_sim).
+#           Can be large.
+#       fe_<dv> - dataframe that contains fixed effects from all of the iterations
+#           (iter_group * niter) for specified simulated measure (dv).
 
-simulateTrajectories <- function(true_sim, a_par, d_par, item_labels, 
-    niter = 20, iter_group = 5, out_dir = "Analysis/Simulation Results/",
-    frml = "true_cog ~ time + (1 | id)") {
+simulateTrajectories <- function(iter_group = 5, niter = 20, item_labels, 
+                    true_sim, a_par, d_par, 
+                    models, dv_labels, items,
+                    in_dir = NULL,
+                    out_dir = "Analysis/Simulation Results/",
+                    frml = "true_cog ~ time + (1 | id)") {
     require(mirt)
     require(tidyverse)
+    
+    # design <- data.frame(dv_labels,models,items)
+    varnms <- paste0("sim_cog_",dv_labels)
+    varnms_rs <- paste0(varnms,"_rs")
     for (itgrp in 1:iter_group) {
         ds <- list()
-        re_all <- list()
-        re_mmse <- list()
-        re_tics <- list()
-        re_hcap <- list()
-        fe_all <- list()
-        fe_mmse <- list()
-        fe_tics <- list()
-        fe_hcap <- list()
+        for (i in 1:length(dv_labels)) {
+            assign(paste0("re_",i),list())
+            assign(paste0("fe_",i),list())
+        }
+
         set.seed(092724)
         for (iter in 1:niter) {
             cat(paste0("Group - ",itgrp, ", Iteration - ",iter,"\n"))
             
             # simulate item responses
             iteration <- ((itgrp - 1) * niter) + iter
-            df <- data.frame(simdata(a = a_par, d = d_par, Theta = true_sim[,paste0("vm",iteration)], 
-                itemtype = 'graded'))
-            names(df) <- item_labels
-            df$id <- true_sim$id
-            df$time <- true_sim$time
-            df$agebl_75 <- true_sim$agebl_75
-            df$true_cog <- true_sim[,paste0("vm",iteration)]
-            df$iteration <- iteration
-            df <- df %>% relocate(c(id,iteration,time,true_cog))
             
-            # true random effect intercept and slope - from calculate_re_true.R 
-            true_re <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/true_random_effects.rds")
-            df <- df %>% left_join((true_re %>% dplyr::select(id,int_true_qrtl,
-                slope_true_qrtl)),by="id")
-            
-            flag_low_response <- FALSE
-            for (itnm in item_labels) {
-                if (length(table(df[,itnm])) < 2) {
-                    flag_low_response <- TRUE
+            if (is.null(in_dir)){
+                df <- data.frame(simdata(a = a_par, d = d_par, Theta = true_sim[,paste0("vm",iteration)], 
+                    itemtype = 'graded'))
+                names(df) <- item_labels
+                df$id <- true_sim$id
+                df$time <- true_sim$time
+                df$agebl_75 <- true_sim$agebl_75
+                df$true_cog <- true_sim[,paste0("vm",iteration)]
+                df$iteration <- iteration
+                df <- df %>% relocate(c(id,iteration,time,true_cog))
+                
+                # true random effect intercept and slope - from calculate_re_true.R 
+                true_re <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/true_random_effects.rds")
+                df <- df %>% left_join((true_re %>% dplyr::select(id,int_true_qrtl,
+                        slope_true_qrtl)),by="id")
+                
+                flag_low_response <- FALSE
+                for (itnm in item_labels) {
+                    if (length(table(df[,itnm])) < 2) {
+                        flag_low_response <- TRUE
+                    }
                 }
+                if (flag_low_response == TRUE) {
+                    iter = iter - 1
+                    next
+                }
+            } else {
+                df <- readRDS(paste0(in_dir,"ds_iteration_group_",itgrp,".rds"))[[iter]]
+                df <- df %>% dplyr::select(c(id:true_cog,agebl_75:slope_true_qrtl,any_of(item_labels)))
             }
-            if (flag_low_response == TRUE) {
-                iter = iter - 1
-                next
+            
+            for (i in 1:length(dv_labels)) {
+                assign(paste0("mirt_dv",i),models[i]) 
             }
-            
-            # mirt_models for cognition measures
-            
-            mirt_mmse <- "mmse = 1-11"
-            mirt_tics <- "tics = 1-8"
-            mirt_hcap <- "hcap = 1-18"
-            mirt_all <- "cog = 1-37"
-            
-            ### estimate mirt model using simulated responses and generate factor scores
-            # create empty re dataframe to return if error in generation
-            re_empty <- data.frame(id = NA, int_true = NA, slope_true = NA, 
-                int_true_se = NA,slope_true_se = NA, int_sim = NA, slope_sim = NA, 
-                int_sim_se = NA, slope_sim_se = NA)
-            
-            tryCatch({
-                mod <- mirt(df[,item_labels], mirt_all)
-                df$sim_cog_all <- fscores(mod)
-                mod <- mirt(df[,item_labels[1:11]], mirt_mmse)
-                df$sim_cog_mmse <- fscores(mod)
-                mod <- mirt(df[,item_labels[12:19]], mirt_tics)
-                df$sim_cog_tics <- fscores(mod)
-                mod <- mirt(df[,item_labels[20:37]], mirt_hcap)
-                df$sim_cog_hcap <- fscores(mod)
-                df <- df %>% 
-                    relocate(c(sim_cog_all,sim_cog_mmse,sim_cog_tics,sim_cog_hcap), 
-                        .after = true_cog)
-            }, error=function(e){return(re_empty)})
-            
-            # rescale factor scores to equate metric to true cognition
-            df <- df %>% mutate(
-                sim_cog_mmse_rs = (((sim_cog_mmse - mean(sim_cog_mmse)) / 
-                    sd(sim_cog_mmse)) * sd(true_cog)) + mean(true_cog),
-                sim_cog_tics_rs = (((sim_cog_tics - mean(sim_cog_tics)) / 
-                    sd(sim_cog_tics)) * sd(true_cog)) + mean(true_cog),
-                sim_cog_hcap_rs = (((sim_cog_hcap - mean(sim_cog_hcap)) / 
-                    sd(sim_cog_hcap)) * sd(true_cog)) + mean(true_cog),
-                sim_cog_all_rs = (((sim_cog_all - mean(sim_cog_all)) / 
-                    sd(sim_cog_all)) * sd(true_cog)) + mean(true_cog),
-            )
-            
-            ### calculate simulated random effects
-            
-            # frml <- as.formula(frml)
-            # frml <- as.formula("true_cog ~ time + (1 | id)")
-            # frml <- "true_cog ~ time + agebl_75 + slope_true_qrtl +
-            #     time:agebl_75 + time:slope_true_qrtl + (1 + time | id)"
-            
-            # MMSE+TICS+HCAP
-            res <- simTraj(data = df, sim_cog_var = "sim_cog_all_rs",frml = frml,
-                iteration = iteration)
-            df <- res[[1]]
-            df <- df %>% rename(cog_true_pred_all = cog_true_pred,
-                cog_sim_pred_all = cog_sim_pred)
-            re <- res[[2]]
-            re$label <- "MMSE+TICS+HCAP"
-            re_all[[paste0("iteration-",iteration)]] <- re
-            fe <- res[[3]]
-            fe$label <- "MMSE+TICS+HCAP"
-            fe_all[[paste0("iteration-",iteration)]] <- fe
-            
-            # MMSE
-            res <- simTraj(data = df, sim_cog_var = "sim_cog_mmse_rs",frml = frml,
-                iteration = iteration)
-            df <- res[[1]]
-            df <- df %>% rename(cog_true_pred_mmse = cog_true_pred,
-                 cog_sim_pred_mmse = cog_sim_pred)
-            re <- res[[2]]
-            re$label <- "MMSE"
-            re_mmse[[paste0("iteration-",iteration)]] <- re
-            fe <- res[[3]]
-            fe$label <- "MMSE"
-            fe_mmse[[paste0("iteration-",iteration)]] <- fe
-            
-            # TICS
-            res <- simTraj(data = df, sim_cog_var = "sim_cog_tics_rs",frml = frml,
-                iteration = iteration)
-            df <- res[[1]]
-            df <- df %>% rename(cog_true_pred_tics = cog_true_pred,
-                cog_sim_pred_tics = cog_sim_pred)
-            re <- res[[2]]
-            re$label <- "TICS"
-            re_tics[[paste0("iteration-",iteration)]] <- re
-            fe <- res[[3]]
-            fe$label <- "TICS"
-            fe_tics[[paste0("iteration-",iteration)]] <- fe
-            
-            # HCAP
-            res <- simTraj(data = df, sim_cog_var = "sim_cog_hcap_rs",frml = frml,
-                iteration = iteration)
-            df <- res[[1]]
-            df <- df %>% rename(cog_true_pred_hcap = cog_true_pred,
-                cog_sim_pred_hcap = cog_sim_pred)
-            re <- res[[2]]
-            re$label <- "HCAP"
-            re_hcap[[paste0("iteration-",iteration)]] <- re
-            fe <- res[[3]]
-            fe$label <- "HCAP"
-            fe_hcap[[paste0("iteration-",iteration)]] <- fe
-            
-            ds[[paste0("iteration-",iteration)]] <- df
-            
-            
-        } # end for iter
-        
-        saveRDS(ds, file = paste0(out_dir,"ds_iteration_group_", itgrp, ".rds"))
-        saveRDS(re_mmse, file = paste0(out_dir,"re_mmse_iteration_group_", itgrp, ".rds"))
-        saveRDS(re_tics, file = paste0(out_dir,"re_tics_iteration_group_", itgrp, ".rds"))
-        saveRDS(re_hcap, file = paste0(out_dir,"re_hcap_iteration_group_", itgrp, ".rds"))
-        saveRDS(re_all, file = paste0(out_dir,"re_all_iteration_group_", itgrp, ".rds"))
-        saveRDS(fe_mmse, file = paste0(out_dir,"fe_mmse_iteration_group_", itgrp, ".rds"))
-        saveRDS(fe_tics, file = paste0(out_dir,"fe_tics_iteration_group_", itgrp, ".rds"))
-        saveRDS(fe_hcap, file = paste0(out_dir,"fe_hcap_iteration_group_", itgrp, ".rds"))
-        saveRDS(fe_all, file = paste0(out_dir,"fe_all_iteration_group_", itgrp, ".rds"))
-        
-    } # end for itgrp
-    
-    for (itgrp in 1:iter_group) {
-        if (itgrp == 1) {
-            re_mmse <- readRDS(paste0(out_dir,"re_mmse_iteration_group_", itgrp, ".rds"))
-            re_mmse <- re_mmse %>% bind_rows()
-            re_tics <- readRDS(paste0(out_dir,"re_tics_iteration_group_", itgrp, ".rds"))
-            re_tics <- re_tics %>% bind_rows()
-            re_hcap <- readRDS(paste0(out_dir,"re_hcap_iteration_group_", itgrp, ".rds"))
-            re_hcap <- re_hcap %>% bind_rows()
-            re_all <- readRDS(paste0(out_dir,"re_all_iteration_group_", itgrp, ".rds"))
-            re_all <- re_all %>% bind_rows()
-            
-            fe_mmse <- readRDS(paste0(out_dir,"fe_mmse_iteration_group_", itgrp, ".rds"))
-            fe_mmse <- fe_mmse %>% bind_rows()
-            fe_tics <- readRDS(paste0(out_dir,"fe_tics_iteration_group_", itgrp, ".rds"))
-            fe_tics <- fe_tics %>% bind_rows()
-            fe_hcap <- readRDS(paste0(out_dir,"fe_hcap_iteration_group_", itgrp, ".rds"))
-            fe_hcap <- fe_hcap %>% bind_rows()
-            fe_all <- readRDS(paste0(out_dir,"fe_all_iteration_group_", itgrp, ".rds"))
-            fe_all <- fe_all %>% bind_rows()
-            
-        } else {
-            re_mmse_temp <- readRDS(paste0(out_dir,"re_mmse_iteration_group_", itgrp, ".rds"))
-            re_mmse_temp <- re_mmse_temp %>% bind_rows()
-            re_mmse <- bind_rows(re_mmse, re_mmse_temp)
-            re_tics_temp <- readRDS(paste0(out_dir,"re_tics_iteration_group_", itgrp, ".rds"))
-            re_tics_temp <- re_tics_temp %>% bind_rows()
-            re_tics <- bind_rows(re_tics, re_tics_temp)
-            re_hcap_temp <- readRDS(paste0(out_dir,"re_hcap_iteration_group_", itgrp, ".rds"))
-            re_hcap_temp <- re_hcap_temp %>% bind_rows()
-            re_hcap <- bind_rows(re_hcap, re_hcap_temp)
-            re_all_temp <- readRDS(paste0(out_dir,"re_all_iteration_group_", itgrp, ".rds"))
-            re_all_temp <- re_all_temp %>% bind_rows()
-            re_all <- bind_rows(re_all, re_all_temp)
-            
-            fe_mmse_temp <- readRDS(paste0(out_dir,"fe_mmse_iteration_group_", itgrp, ".rds"))
-            fe_mmse_temp <- fe_mmse_temp %>% bind_rows()
-            fe_mmse <- bind_rows(fe_mmse, fe_mmse_temp)
-            fe_tics_temp <- readRDS(paste0(out_dir,"fe_tics_iteration_group_", itgrp, ".rds"))
-            fe_tics_temp <- fe_tics_temp %>% bind_rows()
-            fe_tics <- bind_rows(fe_tics, fe_tics_temp)
-            fe_hcap_temp <- readRDS(paste0(out_dir,"fe_hcap_iteration_group_", itgrp, ".rds"))
-            fe_hcap_temp <- fe_hcap_temp %>% bind_rows()
-            fe_hcap <- bind_rows(fe_hcap, fe_hcap_temp)
-            fe_all_temp <- readRDS(paste0(out_dir,"fe_all_iteration_group_", itgrp, ".rds"))
-            fe_all_temp <- fe_all_temp %>% bind_rows()
-            fe_all <- bind_rows(fe_all, fe_all_temp)
-            
-        }
-    }
-    saveRDS(re_mmse, file = paste0(out_dir,"re_mmse", ".rds"))
-    saveRDS(re_tics, file = paste0(out_dir,"re_tics", ".rds"))
-    saveRDS(re_hcap, file = paste0(out_dir,"re_hcap", ".rds"))
-    saveRDS(re_all, file = paste0(out_dir,"re_all", ".rds"))
-
-    saveRDS(fe_mmse, file = paste0(out_dir,"fe_mmse", ".rds"))
-    saveRDS(fe_tics, file = paste0(out_dir,"fe_tics", ".rds"))
-    saveRDS(fe_hcap, file = paste0(out_dir,"fe_hcap", ".rds"))
-    saveRDS(fe_all, file = paste0(out_dir,"fe_all", ".rds"))
-    
-    
-    # return(list("ds" = ds, "re_all" = re_all, "re_mmse" = re_mmse,
-    #     "re_tics" = re_tics, "re_hcap" = re_hcap))
-}
-
-
-simulateTrajectories2 <- function(item_labels, niter = 20, iter_group = 5,
-        in_dir = "Analysis/Simulation Results/",
-        out_dir = "Analysis/Simulation Results/",
-        frml = "true_cog ~ time + (1 | id)") {
-    require(mirt)
-    require(tidyverse)
-    for (itgrp in 1:iter_group) {
-        ds <- list()
-        re_tics3 <- list()
-        re_tics10 <- list()
-        re_tics13 <- list()
-        re_tics16 <- list()
-        fe_tics3 <- list()
-        fe_tics10 <- list()
-        fe_tics13 <- list()
-        fe_tics16 <- list()
-        set.seed(092724)
-        for (iter in 1:niter) {
-            cat(paste0("Group - ",itgrp, ", Iteration - ",iter,"\n"))
-            
-            #  load simulated item responses
-            iteration <- ((itgrp - 1) * niter) + iter
-            df <- readRDS(paste0(in_dir,"ds_iteration_group_",itgrp,".rds"))[[iter]]
-            df <- df %>% dplyr::select(c(id:true_cog,agebl_75:slope_true_qrtl,any_of(item_labels)))
-            
-            # ds_iteration_group_36.rds
-            # 
-            # df <- data.frame(simdata(a = a_par, d = d_par, Theta = true_sim[,paste0("vm",iteration)], 
-            #                          itemtype = 'graded'))
-            # names(df) <- item_labels
-            # df$id <- true_sim$id
-            # df$time <- true_sim$time
-            # df$agebl_75 <- true_sim$agebl_75
-            # df$true_cog <- true_sim[,paste0("vm",iteration)]
-            # df$iteration <- iteration
-            # df <- df %>% relocate(c(id,iteration,time,true_cog))
-            
-            # # true random effect intercept and slope - from calculate_re_true.R 
-            # true_re <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/true_random_effects.rds")
-            # df <- df %>% left_join((true_re %>% dplyr::select(id,int_true_qrtl,
-            #                                                   slope_true_qrtl)),by="id")
-            # 
-            # flag_low_response <- FALSE
-            # for (itnm in item_labels) {
-            #     if (length(table(df[,itnm])) < 2) {
-            #         flag_low_response <- TRUE
-            #     }
-            # }
-            # if (flag_low_response == TRUE) {
-            #     iter = iter - 1
-            #     next
-            # }
-            
-            # mirt_models for cognition measures
-            
-            # mirt_mmse <- "mmse = 1-11"
-            # mirt_tics <- "tics = 1-8"
-            # mirt_hcap <- "hcap = 1-18"
-            # mirt_all <- "cog = 1-37"
-
-            mirt_tics3 <- "tics3 = 1-6"
-            mirt_tics10 <- "tics10 = 1-7"
-            mirt_tics13 <- "tics13 = 1-8"
-            mirt_tics16 <- "tics16 = 1-10"
             
             ### estimate mirt model using simulated responses and generate factor scores
             # create empty re dataframe to return if error in generation
@@ -487,89 +262,86 @@ simulateTrajectories2 <- function(item_labels, niter = 20, iter_group = 5,
                                    int_sim_se = NA, slope_sim_se = NA)
             
             tryCatch({
-                mod <- mirt(df[,item_labels[c(1:3,6:8)]], mirt_tics3)
-                df$sim_cog_tics3 <- fscores(mod)
-                mod <- mirt(df[,item_labels[c(1:3,5:8)]], mirt_tics10)
-                df$sim_cog_tics10 <- fscores(mod)
-                mod <- mirt(df[,item_labels[1:8]], mirt_tics13)
-                df$sim_cog_tics13 <- fscores(mod)
-                mod <- mirt(df[,item_labels[1:10]], mirt_tics16)
-                df$sim_cog_tics16 <- fscores(mod)
+                
+                for (i in 1:length(dv_labels)) {
+                    itms <- eval(parse(text = items[i]))
+                    mod <- mirt(df[,item_labels[itms]], models[i])
+                    df[,paste0("sim_cog_",dv_labels[i])] <- fscores(mod)
+                }
+                # varnms <- paste0("sim_cog_",dv_labels)
                 df <- df %>% 
-                    relocate(c(sim_cog_tics3,sim_cog_tics10,sim_cog_tics13,sim_cog_tics16), 
-                        .after = true_cog)
+                    relocate(all_of(varnms), 
+                             .after = true_cog)
             }, error=function(e){return(re_empty)})
-            
+
             # rescale factor scores to equate metric to true cognition
-            df <- df %>% mutate(
-                sim_cog_tics3_rs = (((sim_cog_tics3 - mean(sim_cog_tics3)) / 
-                    sd(sim_cog_tics3)) * sd(true_cog)) + mean(true_cog),
-                sim_cog_tics10_rs = (((sim_cog_tics10 - mean(sim_cog_tics10)) / 
-                    sd(sim_cog_tics10)) * sd(true_cog)) + mean(true_cog),
-                sim_cog_tics13_rs = (((sim_cog_tics13 - mean(sim_cog_tics13)) / 
-                    sd(sim_cog_tics13)) * sd(true_cog)) + mean(true_cog),
-                sim_cog_tics16_rs = (((sim_cog_tics16 - mean(sim_cog_tics16)) / 
-                    sd(sim_cog_tics16)) * sd(true_cog)) + mean(true_cog),
-            )
             
-            ### calculate simulated random effects
+            # varnms_rs <- paste0(varnms,"_rs")
             
-            # frml <- as.formula(frml)
-            # frml <- as.formula("true_cog ~ time + (1 | id)")
-            # frml <- "true_cog ~ time + agebl_75 + slope_true_qrtl +
-            #     time:agebl_75 + time:slope_true_qrtl + (1 + time | id)"
+            for (i in 1:length(dv_labels)) {
+                df[,varnms_rs[i]] <-
+                    (((df[,varnms[i]] - mean(df[,varnms[i]])) / 
+                          sd(df[,varnms[i]])) * sd(df$true_cog)) + mean(df$true_cog)
+            }
             
-            # TICS3
-            res <- simTraj(data = df, sim_cog_var = "sim_cog_tics3_rs",frml = frml,
-                iteration = iteration)
-            df <- res[[1]]
-            df <- df %>% rename(cog_true_pred_tics3 = cog_true_pred,
-                cog_sim_pred_tics3 = cog_sim_pred)
-            re <- res[[2]]
-            re$label <- "TICS3"
-            re_tics3[[paste0("iteration-",iteration)]] <- re
-            fe <- res[[3]]
-            fe$label <- "TICS3"
-            fe_tics3[[paste0("iteration-",iteration)]] <- fe
-            
-            # TICS10
-            res <- simTraj(data = df, sim_cog_var = "sim_cog_tics10_rs",frml = frml,
-                iteration = iteration)
-            df <- res[[1]]
-            df <- df %>% rename(cog_true_pred_tics10 = cog_true_pred,
-                cog_sim_pred_tics10 = cog_sim_pred)
-            re <- res[[2]]
-            re$label <- "TICS10"
-            re_tics10[[paste0("iteration-",iteration)]] <- re
-            fe <- res[[3]]
-            fe$label <- "TICS10"
-            fe_tics10[[paste0("iteration-",iteration)]] <- fe
-            
-            # TICS13
-            res <- simTraj(data = df, sim_cog_var = "sim_cog_tics13_rs",frml = frml,
-                           iteration = iteration)
-            df <- res[[1]]
-            df <- df %>% rename(cog_true_pred_tics13 = cog_true_pred,
-                cog_sim_pred_tics13 = cog_sim_pred)
-            re <- res[[2]]
-            re$label <- "TICS13"
-            re_tics13[[paste0("iteration-",iteration)]] <- re
-            fe <- res[[3]]
-            fe$label <- "TICS13"
-            fe_tics13[[paste0("iteration-",iteration)]] <- fe
-            
-            # TICS16
-            res <- simTraj(data = df, sim_cog_var = "sim_cog_tics16_rs",frml = frml,
-                iteration = iteration)
-            df <- res[[1]]
-            df <- df %>% rename(cog_true_pred_tics16 = cog_true_pred,
-                cog_sim_pred_tics16 = cog_sim_pred)
-            re <- res[[2]]
-            re$label <- "TICS16"
-            re_tics16[[paste0("iteration-",iteration)]] <- re
-            fe <- res[[3]]
-            fe$label <- "TICS16"
-            fe_tics16[[paste0("iteration-",iteration)]] <- fe
+            # mixed effects model of simulated longitudinal data
+            for (i in 1:length(dv_labels)) {
+                res <- simTraj(data = df, sim_cog_var = varnms_rs[i],frml = frml,
+                    iteration = iteration)
+                
+                df <- res[[1]]
+                names(df) <- sub("cog_true_pred$",paste0("cog_true_pred_",
+                    dv_labels[i]),names(df))
+                names(df) <- sub("cog_sim_pred$",paste0("cog_sim_pred_",
+                    dv_labels[i]),names(df))
+                
+                re <- res[[2]]
+                re$label <- toupper(dv_labels[i])
+                
+                fe <- res[[3]]
+                fe$label <- toupper(dv_labels[i])
+                
+                if (i == 1) {
+                    re_1[[paste0("iteration-",iteration)]] = re
+                    fe_1[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 2) {
+                    re_2[[paste0("iteration-",iteration)]] = re
+                    fe_2[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 3) {
+                    re_3[[paste0("iteration-",iteration)]] = re
+                    fe_3[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 4) {
+                    re_4[[paste0("iteration-",iteration)]] = re
+                    fe_4[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 5) {
+                    re_5[[paste0("iteration-",iteration)]] = re
+                    fe_5[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 6) {
+                    re_6[[paste0("iteration-",iteration)]] = re
+                    fe_6[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 7) {
+                    re_7[[paste0("iteration-",iteration)]] = re
+                    fe_7[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 8) {
+                    re_8[[paste0("iteration-",iteration)]] = re
+                    fe_8[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 9) {
+                    re_9[[paste0("iteration-",iteration)]] = re
+                    fe_9[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 10) {
+                    re_10[[paste0("iteration-",iteration)]] = re
+                    fe_10[[paste0("iteration-",iteration)]] = fe
+                }
+            }
             
             ds[[paste0("iteration-",iteration)]] <- df
             
@@ -577,85 +349,294 @@ simulateTrajectories2 <- function(item_labels, niter = 20, iter_group = 5,
         } # end for iter
         
         saveRDS(ds, file = paste0(out_dir,"ds_iteration_group_", itgrp, ".rds"))
-        saveRDS(re_tics3, file = paste0(out_dir,"re_tics3_iteration_group_", itgrp, ".rds"))
-        saveRDS(re_tics10, file = paste0(out_dir,"re_tics10_iteration_group_", itgrp, ".rds"))
-        saveRDS(re_tics13, file = paste0(out_dir,"re_tics13_iteration_group_", itgrp, ".rds"))
-        saveRDS(re_tics16, file = paste0(out_dir,"re_tics16_iteration_group_", itgrp, ".rds"))
-        saveRDS(fe_tics3, file = paste0(out_dir,"fe_tics3_iteration_group_", itgrp, ".rds"))
-        saveRDS(fe_tics10, file = paste0(out_dir,"fe_tics10_iteration_group_", itgrp, ".rds"))
-        saveRDS(fe_tics13, file = paste0(out_dir,"fe_tics13_iteration_group_", itgrp, ".rds"))
-        saveRDS(fe_tics16, file = paste0(out_dir,"fe_tics16_iteration_group_", itgrp, ".rds"))
+
+        for (i in 1:length(dv_labels)) {
+            saveRDS(eval(parse(text=paste0("re_",i))), 
+                    file = paste0(out_dir,"re_",dv_labels[i],
+                                  "_iteration_group_", itgrp, ".rds"))
+            saveRDS(eval(parse(text=paste0("fe_",i))), 
+                    file = paste0(out_dir,"fe_",dv_labels[i],
+                                  "_iteration_group_", itgrp, ".rds"))
+        }
+
+    } # end for itgrp
+    
+    for (itgrp in 1:iter_group) {
+        if (itgrp == 1) {
+            for (i in 1:length(dv_labels)) {
+                assign(paste0("re_",i),
+                       readRDS(paste0(out_dir,"re_",dv_labels[i],
+                                      "_iteration_group_", itgrp, ".rds")) %>% bind_rows())
+                assign(paste0("fe_",i),
+                       readRDS(paste0(out_dir,"fe_",dv_labels[i],
+                                      "_iteration_group_", itgrp, ".rds")) %>% bind_rows())
+            }
+            
+        } else {
+            for (i in 1:length(dv_labels)) {
+                re_temp <- readRDS(paste0(out_dir,"re_",dv_labels[i],
+                                          "_iteration_group_", itgrp, ".rds")) %>% bind_rows()
+                assign(paste0("re_",i),
+                       eval(parse(text=paste0("re_",i))) %>% bind_rows(re_temp))
+                fe_temp <- readRDS(paste0(out_dir,"fe_",dv_labels[i],
+                                          "_iteration_group_", itgrp, ".rds")) %>% bind_rows()
+                assign(paste0("fe_",i),
+                       eval(parse(text=paste0("fe_",i))) %>% bind_rows(fe_temp))
+            }
+            
+        }
+    }
+    for (i in 1:length(dv_labels)) {
+        saveRDS(eval(parse(text=paste0("re_",i))), 
+                file = paste0(out_dir,"re_",dv_labels[i],".rds"))
+        saveRDS(eval(parse(text=paste0("fe_",i))), 
+                file = paste0(out_dir,"fe_",dv_labels[i],".rds"))
+    }
+    
+}
+
+#   simulateBlendedTrajectories is a function that inputs previously generated cognitive
+#       test scores, "blends" results from two measures into a new variable
+#       (the first measure will comprise the baseline assessment through blend_time, 
+#       the second will include assessments subsequent to blend_time). It estimates
+#       linear mixed effect (lmer) models via simTraj() and outputs results that are 
+#       comparable to those from simulateTrajectories(). 
+#   Up to 10 cognitive measures can be processed in each run.
+#
+#   Parameters
+#       iter_group - number of groups of (niter) iterations
+#       niter - number of simulation iterations within iteration groups
+#       blend_labels - vector that contains label for measures that will be blended.
+#           each element is a vector with two elements that are labels for the
+#           first and second measures to be blended (e.g. "tics3-tics13"). A simple,
+#           non-blended measure can be specified by repeating the measure 
+#           (e.g. "tics3-tics3").
+#       blend_time - time-in-study cut-point for assigning first or second measure
+#           to blended measure. First is assigned to assessments with time ≤ blend_time,
+#           second to time > blend_time.
+#       in_dir - path to directory for input of previously generated simulated
+#           item response datasets. if is.null(in_dir) item responses will be simulated
+#           using true_sim, a_par, and d_par
+#       out_dir - path to directory for output of simulation results
+#       frml - formula specification for (lmer) longitudinal mixed effects model
+#           e.g. "true_cog ~ time + (1 + time | id)"
+#
+#   Value - Saves lists of results to out_dir - there is a file for each iter_group 
+#       that contains a list with niter elements. There are also files that merge
+#       random effects and fixed effects across iterations. These files contain granular
+#       results from the simulations and can be individually and cumulatively large.
+#
+#       ds_iteration_group_<iter_group number> - list of datasets for each of the 
+#           niter simulations. Each dataset contains the true cognition value (true_cog), 
+#           the simulated item responses conditional on true_cog, cognition factor scores, 
+#           and longitudinal mixed effect model predicted cognition values for each simulated
+#           measure specified in dv_labels. Can be large.
+#       re_<dv>_iteration_group_<iter_group number> - list of estimated random effects 
+#           for each of the niter simulations  for each simulated measure specified 
+#           in dv_labels. Includes intercept and slope random effects for 
+#           cognition (_true) and simulated cognition factor scores (_sim)
+#       fe_<dv>_iteration_group_<iter_group number> - list of estimated fixed effects 
+#           for each of the niter simulations for each simulated measure specified in dv_labels.
+#       re_<dv> - dataframe that contains random effects from all of the iterations
+#           (iter_group * niter) for specified simulated measure (dv). 
+#           Includes intercept and slope random effects for 
+#           cognition (_true) and simulated cognition factor scores (_sim).
+#           Can be large.
+#       fe_<dv> - dataframe that contains fixed effects from all of the iterations
+#           (iter_group * niter) for specified simulated measure (dv).
+
+
+
+
+simulateBlendedTrajectories <- function(niter = 20, iter_group = 5,
+                    blend_labels = blend_labels,
+                    blend_time = blend_time,
+                    in_dir = "Analysis/Simulation Results/",
+                    out_dir = "Analysis/Simulation Results/",
+                    frml = "true_cog ~ time + (1 | id)") {
+    require(mirt)
+    require(tidyverse)
+    require(stringr)
+    # source("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Code/simulate_trajectories.R")
+    
+    dv_labels <- blend_labels
+    design <- data.frame(dv_labels)
+    design <- design %>% mutate(
+        dv1 = str_extract(dv_labels,"^.*(?=-)"),
+        dv2 = str_extract(dv_labels,"(?<=-).*")
+    )
+    
+    for (itgrp in 1:iter_group) {
+        ds <- list()
+        for (i in 1:length(design$dv_labels)) {
+            assign(paste0("re_",i),list())
+            assign(paste0("fe_",i),list())
+        }
+        set.seed(092724)
+        for (iter in 1:niter) {
+            cat(paste0("Group - ",itgrp, ", Iteration - ",iter,"\n"))
+            
+            #  load simulated item responses
+            iteration <- ((itgrp - 1) * niter) + iter
+            df <- readRDS(paste0(in_dir,"ds_iteration_group_",itgrp,".rds"))[[iter]]
+            df <- df %>% dplyr::select(c(id:true_cog,agebl_75:slope_true_qrtl,any_of(item_labels),
+                                         ends_with("_rs")))
+            
+            for (i in 1:length(design$dv_labels)) {
+                lbl <- paste0("sim_cog_",design$dv_labels[i],"_rs")
+                lbl1 <- paste0("sim_cog_",design$dv1[i],"_rs")
+                lbl2 <- paste0("sim_cog_",design$dv2[i],"_rs")
+                df[,lbl] <- case_when(
+                    df$time <= blend_time ~ df[,lbl1],
+                    df$time > blend_time ~ df[,lbl2]
+                )
+                
+            }
+            
+            
+            # mixed effects model of simulated longitudinal data
+            
+            varnms_rs <- paste0("sim_cog_",design$dv_labels,"_rs")
+            
+            for (i in 1:length(design$dv_labels)) {
+                res <- simTraj(data = df, sim_cog_var = varnms_rs[i],frml = frml,
+                               iteration = iteration)
+                
+                df <- res[[1]]
+                names(df) <- sub("cog_true_pred$",paste0("cog_true_pred_",
+                                                         design$dv_labels[i]),names(df))
+                names(df) <- sub("cog_sim_pred$",paste0("cog_sim_pred_",
+                                                        design$dv_labels[i]),names(df))
+                
+                re <- res[[2]]
+                re$label <- toupper(design$dv_labels[i])
+                
+                fe <- res[[3]]
+                fe$label <- toupper(design$dv_labels[i])
+                
+                if (i == 1) {
+                    re_1[[paste0("iteration-",iteration)]] = re
+                    fe_1[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 2) {
+                    re_2[[paste0("iteration-",iteration)]] = re
+                    fe_2[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 3) {
+                    re_3[[paste0("iteration-",iteration)]] = re
+                    fe_3[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 4) {
+                    re_4[[paste0("iteration-",iteration)]] = re
+                    fe_4[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 5) {
+                    re_5[[paste0("iteration-",iteration)]] = re
+                    fe_5[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 6) {
+                    re_6[[paste0("iteration-",iteration)]] = re
+                    fe_6[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 7) {
+                    re_7[[paste0("iteration-",iteration)]] = re
+                    fe_7[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 8) {
+                    re_8[[paste0("iteration-",iteration)]] = re
+                    fe_8[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 9) {
+                    re_9[[paste0("iteration-",iteration)]] = re
+                    fe_9[[paste0("iteration-",iteration)]] = fe
+                }
+                if (i == 10) {
+                    re_10[[paste0("iteration-",iteration)]] = re
+                    fe_10[[paste0("iteration-",iteration)]] = fe
+                }
+            }
+            
+            ds[[paste0("iteration-",iteration)]] <- df
+            
+            
+        } # end for iter
+        
+        saveRDS(ds, file = paste0(out_dir,"ds_iteration_group_", itgrp, ".rds"))
+        
+        for (i in 1:length(design$dv_labels)) {
+            saveRDS(eval(parse(text=paste0("re_",i))), 
+                    file = paste0(out_dir,"re_",design$dv_labels[i],
+                                  "_iteration_group_", itgrp, ".rds"))
+            saveRDS(eval(parse(text=paste0("fe_",i))), 
+                    file = paste0(out_dir,"fe_",design$dv_labels[i],
+                                  "_iteration_group_", itgrp, ".rds"))
+        }
         
     } # end for itgrp
     
     for (itgrp in 1:iter_group) {
         if (itgrp == 1) {
-            re_tics3 <- readRDS(paste0(out_dir,"re_tics3_iteration_group_", itgrp, ".rds"))
-            re_tics3 <- re_tics3 %>% bind_rows()
-            re_tics10 <- readRDS(paste0(out_dir,"re_tics10_iteration_group_", itgrp, ".rds"))
-            re_tics10 <- re_tics10 %>% bind_rows()
-            re_tics13 <- readRDS(paste0(out_dir,"re_tics13_iteration_group_", itgrp, ".rds"))
-            re_tics13 <- re_tics13 %>% bind_rows()
-            re_tics16 <- readRDS(paste0(out_dir,"re_tics16_iteration_group_", itgrp, ".rds"))
-            re_tics16 <- re_tics16 %>% bind_rows()
+            for (i in 1:length(design$dv_labels)) {
+                assign(paste0("re_",i),
+                       readRDS(paste0(out_dir,"re_",design$dv_labels[i],
+                                      "_iteration_group_", itgrp, ".rds")) %>% bind_rows())
+                assign(paste0("fe_",i),
+                       readRDS(paste0(out_dir,"fe_",design$dv_labels[i],
+                                      "_iteration_group_", itgrp, ".rds")) %>% bind_rows())
+            }
             
-            fe_tics3 <- readRDS(paste0(out_dir,"fe_tics3_iteration_group_", itgrp, ".rds"))
-            fe_tics3 <- fe_tics3 %>% bind_rows()
-            fe_tics10 <- readRDS(paste0(out_dir,"fe_tics10_iteration_group_", itgrp, ".rds"))
-            fe_tics10 <- fe_tics10 %>% bind_rows()
-            fe_tics13 <- readRDS(paste0(out_dir,"fe_tics13_iteration_group_", itgrp, ".rds"))
-            fe_tics13 <- fe_tics13 %>% bind_rows()
-            fe_tics16 <- readRDS(paste0(out_dir,"fe_tics16_iteration_group_", itgrp, ".rds"))
-            fe_tics16 <- fe_tics16 %>% bind_rows()
             
         } else {
-            re_tics3_temp <- readRDS(paste0(out_dir,"re_tics3_iteration_group_", itgrp, ".rds"))
-            re_tics3_temp <- re_tics3_temp %>% bind_rows()
-            re_tics3 <- bind_rows(re_tics3, re_tics3_temp)
-            re_tics10_temp <- readRDS(paste0(out_dir,"re_tics10_iteration_group_", itgrp, ".rds"))
-            re_tics10_temp <- re_tics10_temp %>% bind_rows()
-            re_tics10 <- bind_rows(re_tics10, re_tics10_temp)
-            re_tics13_temp <- readRDS(paste0(out_dir,"re_tics13_iteration_group_", itgrp, ".rds"))
-            re_tics13_temp <- re_tics13_temp %>% bind_rows()
-            re_tics13 <- bind_rows(re_tics13, re_tics13_temp)
-            re_tics16_temp <- readRDS(paste0(out_dir,"re_tics16_iteration_group_", itgrp, ".rds"))
-            re_tics16_temp <- re_tics16_temp %>% bind_rows()
-            re_tics16 <- bind_rows(re_tics16, re_tics16_temp)
+            for (i in 1:length(design$dv_labels)) {
+                re_temp <- readRDS(paste0(out_dir,"re_",design$dv_labels[i],
+                                          "_iteration_group_", itgrp, ".rds")) %>% bind_rows()
+                assign(paste0("re_",i),
+                       eval(parse(text=paste0("re_",i))) %>% bind_rows(re_temp))
+                fe_temp <- readRDS(paste0(out_dir,"fe_",design$dv_labels[i],
+                                          "_iteration_group_", itgrp, ".rds")) %>% bind_rows()
+                assign(paste0("fe_",i),
+                       eval(parse(text=paste0("fe_",i))) %>% bind_rows(fe_temp))
+            }
             
-            fe_tics3_temp <- readRDS(paste0(out_dir,"fe_tics3_iteration_group_", itgrp, ".rds"))
-            fe_tics3_temp <- fe_tics3_temp %>% bind_rows()
-            fe_tics3 <- bind_rows(fe_tics3, fe_tics3_temp)
-            fe_tics10_temp <- readRDS(paste0(out_dir,"fe_tics10_iteration_group_", itgrp, ".rds"))
-            fe_tics10_temp <- fe_tics10_temp %>% bind_rows()
-            fe_tics10 <- bind_rows(fe_tics10, fe_tics10_temp)
-            fe_tics13_temp <- readRDS(paste0(out_dir,"fe_tics13_iteration_group_", itgrp, ".rds"))
-            fe_tics13_temp <- fe_tics13_temp %>% bind_rows()
-            fe_tics13 <- bind_rows(fe_tics13, fe_tics13_temp)
-            fe_tics16_temp <- readRDS(paste0(out_dir,"fe_tics16_iteration_group_", itgrp, ".rds"))
-            fe_tics16_temp <- fe_tics16_temp %>% bind_rows()
-            fe_tics16 <- bind_rows(fe_tics16, fe_tics16_temp)
+            
             
         }
     }
-    saveRDS(re_tics3, file = paste0(out_dir,"re_tics3", ".rds"))
-    saveRDS(re_tics10, file = paste0(out_dir,"re_tics10", ".rds"))
-    saveRDS(re_tics13, file = paste0(out_dir,"re_tics13", ".rds"))
-    saveRDS(re_tics16, file = paste0(out_dir,"re_tics16", ".rds"))
     
-    saveRDS(fe_tics3, file = paste0(out_dir,"fe_tics3", ".rds"))
-    saveRDS(fe_tics10, file = paste0(out_dir,"fe_tics10", ".rds"))
-    saveRDS(fe_tics13, file = paste0(out_dir,"fe_tics13", ".rds"))
-    saveRDS(fe_tics16, file = paste0(out_dir,"fe_tics16", ".rds"))
+    for (i in 1:length(design$dv_labels)) {
+        saveRDS(eval(parse(text=paste0("re_",i))), 
+                file = paste0(out_dir,"re_",design$dv_labels[i],".rds"))
+        saveRDS(eval(parse(text=paste0("fe_",i))), 
+                file = paste0(out_dir,"fe_",design$dv_labels[i],".rds"))
+    }
     
-    
-    # return(list("ds" = ds, "re_all" = re_all, "re_mmse" = re_mmse,
-    #     "re_tics" = re_tics, "re_hcap" = re_hcap))
 }
 
 
 # dat_cols <- c("id","time","age","agebl_75","slope_true_qrtl","int_true_qrtl")
 # res_cols <- c("cog_true_pred_all","cog_sim_pred_all","cog_sim_pred_mmse",
 #               "cog_sim_pred_tics","cog_sim_pred_hcap")
+
+#   mergeSimResults is a function that merges model predicted outcomes from lists of 
+#       simulated datasets generated by simulateTrajectories() and simulateBlendedTrajectories().
+#       It returns a dataframe with number of rows equal to the number of rows in the 
+#       simulated dataset and columns for each iteration and each simulated measure.
+#
+#   Parameters:
+#       file_name - template for names of files to be inputted and merged. 
+#           "_1" will be programmatically replaced by increasing group numbers.
+#       out_dir - path to directory for output of merged file
+#       dat_cols - vector containing names of columns (other than cognitive measures) to
+#           be included in merged data file
+#       res_cols - vector containing names of cognitive measure columns to
+#           be included in merged data file
+#       iter_group - number of groups of (niter) iterations
+#       niter - number of simulation iterations within iteration groups
+#
+#   Value - Returns dataframe that contains dat_cols variables common to the simulated 
+#       datasets and columns for each iteration and each cognitive measure specified
+#       in res_cols.
+
 
 mergeSimResults <-function(file_name = "ds_iteration_group_1.rds",
                            out_dir = out_dir,
@@ -685,136 +666,147 @@ mergeSimResults <-function(file_name = "ds_iteration_group_1.rds",
 #   Code in this segment can be uncommented to run and test the functions in this file.
 #   This code extracts longitudinal "true" cognition values from
 #   "simulated_longitudinal_true_cognition.rds". This file is a synthetic dataset
-#   with 792 individuals uniformly distributed in age for 60-95, each with baseline 
+#   with 792 individuals uniformly distributed in age from 60-95, each with baseline 
 #   assessment and 10 follow-up assessments at 1 year intervals. Parameters to build 
 #   this dataset came from an empirical analysis of a large dataset representative 
 #   of older adults. This dataset is a long-form dataset that includes a person id
 #   variable (id) and time-in-study variable (time) that are used in longitudinal
 #   mixed effects model generated in the simTraj() function. It contains 4000
-#   simulations of true cognition for the longitudinal data srtructure (labelled
+#   simulations of true cognition for the longitudinal data structure (labelled
 #   vm1-vm4000). The simulation of true cognition is described in
 #   longitudinal_cognition_simulation.<html/Rmd>.
 
+
+# # code to use simulateTrajectories() to generate simulated item response datasets
+# #   from simulated true cognition (true_sim) and item parameters (a_par and d_par)
+# #   and run mixed effects longitudinal models in which mirt estimated factor scores 
+# #   for each simulated cognitive measures are dependent variables
+# #   Note that in_dir must be NULL
+# 
+# source("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Code/simulate_trajectories.R")
+# 
+# item_labels <- c("wlimrc_ticsr","wldlrc_ticsr","cntbck_ticsr","animfl_ticsr",
+#                  "numser_ticsr","serial7_ticsr","ornttime_ticsr","naming_ticsr",
+#                  "trailsa_hcapir","trailsb_hcapir")
+# dv_labels <- c("tics3","tics10","tics13","tics16")
+# models <- c(
+#     "tics3 = 1-6",
+#     "tics10 = 1-7",
+#     "tics13 = 1-8",
+#     "tics16 = 1-10"
+# )
+# items <- c(
+#     "c(1:3,6:8)",
+#     "c(1:3,5:8)",
+#     "c(1:8)",
+#     "c(1:10)"
+# )
+# out_dir = "Analysis/Simulation Results/Temp2/"
+# 
+# frml <- "true_cog ~ time + agebl_75 + slope_true_qrtl +
+#             time:agebl_75 + time:slope_true_qrtl + (1 + time | id)"
+# 
 # # load simulated "true" cognition
 # true_sim <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/simulated_longitudinal_true_cognition.rds")
 # 
-# # Item names for analysis
-# mmse_nmsr <- c("ornttime_mmser","orntplace_mmser","imrec_mmser","delrec_mmser",
-#                "spellbck_mmser","naming_mmser","phrase_mmser","commfoll_mmser","writesent_mmser",
-#                "draw_mmser","comm3step_mmser")
-# 
-# tics_nmsr <- c("wlimrc_ticsr","wldlrc_ticsr","count_ticsr","animfl_ticsr",
-#                "numser_ticsr","serial7_ticsr","ornttime_ticsr","naming_ticsr")
-# 
-# hcap_nmsr <- c("naming_hcapr","ceradtot_hcapr","ceraddel_hcapr","ceradrcg_hcapr",
-#                "animfl_hcapr","bmim_hcapr","bmdel_hcapr","lmim_hcapr","lmdel_hcapr","lmrcg_hcapr",
-#                "conprxim_hcapr","conprxdel_hcapr","dsmt_hcapr","numser_hcapr","ravens_hcapr",
-#                "trailsa_hcapir","trailsb_hcapir","spatial_hcapr")
-# item_labels <- c(mmse_nmsr,tics_nmsr,hcap_nmsr)
-
+# # load item parameters
 # load("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Analysis/co_calibration_results.Rdata")
 # 
-# a <- extractMIRTParm((res_md_1a))[[1]]
-# d <- extractMIRTParm((res_md_1a))[[2]]
+# a <- extractMIRTParm((res_md_1a))[[1]][12:21]
+# d <- extractMIRTParm((res_md_1a))[[2]][12:21,]
 # 
-# sim20 <- simulateTrajectories(true_sim = true_sim, a_par = a, d_par = d,
-#     item_labels=item_labels, iter_group = 5, niter = 4)
-# 
-# simulateTrajectories(true_sim = true_sim, a_par = a, d_par = d,
-#     item_labels=item_labels, iter_group = 5, niter = 3)
-# code to read and merge iteration group files
-# for (itgrp in 1:iter_group) {
-#     if (itgrp == 1) {
-#         re_mmse <- readRDS(paste0(out_dir,"re_mmse_iteration_group_", itgrp, ".rds"))
-#         re_tics <- readRDS(paste0(out_dir,"re_tics_iteration_group_", itgrp, ".rds"))
-#         re_hcap <- readRDS(paste0(out_dir,"re_hcap_iteration_group_", itgrp, ".rds"))
-#         re_all <- readRDS(paste0(out_dir,"re_all_iteration_group_", itgrp, ".rds"))
-#     } else {
-#         re_mmse_temp <- readRDS(paste0(out_dir,"re_mmse_iteration_group_", itgrp, ".rds"))
-#         re_mmse <- bind_rows(re_mmse, re_mmse_temp)
-#         re_tics_temp <- readRDS(paste0(out_dir,"re_tics_iteration_group_", itgrp, ".rds"))
-#         re_tics <- bind_rows(re_tics, re_tics_temp)
-#         re_hcap_temp <- readRDS(paste0(out_dir,"re_hcap_iteration_group_", itgrp, ".rds"))
-#         re_hcap <- bind_rows(re_hcap, re_hcap_temp)
-#         re_all_temp <- readRDS(paste0(out_dir,"re_all_iteration_group_", itgrp, ".rds"))
-#         re_all <- bind_rows(re_all, re_all_temp)
-#     }
-# }
-# saveRDS(re_all, file = paste0(out_dir,"re_all", ".rds"))
+# simulateTrajectories(iter_group=3,niter=3,item_labels=item_labels,
+#                      true_sim=true_sim,a_par=a,d_par=d,
+#                      models=models,dv_labels=dv_labels,items=items,
+#                      in_dir=NULL,out_dir=out_dir,frml=frml)
 
-# re_mmse <- readRDS(paste0(out_dir,"re_mmse", ".rds"))
-# re_tics <- readRDS(paste0(out_dir,"re_tics", ".rds"))
-# re_hcap <- readRDS(paste0(out_dir,"re_hcap", ".rds"))
-# re_all <- readRDS(paste0(out_dir,"re_all", ".rds"))
 
-# code to examine correlations of true cognition across iterations
-# dsg1 <- readRDS(paste0(out_dir,"ds_iteration_group_1.rds"))
-# tc <- dsg1[[1]] %>% dplyr::select(id,time,true_cog) %>% 
-#     left_join((dsg1[[5]] %>% dplyr::select(id,time,true_cog)) %>% 
-#         rename(true_cog2 = true_cog), by = c("id","time"))
+# # code to use simulateTrajectories() to input previously created simulated datasets
+# #   and run mixed effects longitudinal models in which mirt estimated factor scores 
+# #   for each simulated cognitive measures are dependent variables
+# #   Note that in_dir is the folder with the previously created simulated datasets
 # 
-# cor(tc[,c("true_cog","true_cog2")])
-# cor(s4[,c("vm1","vm5")])
+# source("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Code/simulate_trajectories.R")
 # 
+# item_labels <- c("wlimrc_ticsr","wldlrc_ticsr","cntbck_ticsr","animfl_ticsr",
+#                  "numser_ticsr","serial7_ticsr","ornttime_ticsr","naming_ticsr",
+#                  "trailsa_hcapir","trailsb_hcapir")
+# dv_labels <- c("tics3","tics10","tics13","tics16")
+# models <- c(
+#     "tics3 = 1-6",
+#     "tics10 = 1-7",
+#     "tics13 = 1-8",
+#     "tics16 = 1-10"
+# )
+# items <- c(
+#     "c(1:3,6:8)",
+#     "c(1:3,5:8)",
+#     "c(1:8)",
+#     "c(1:10)"
+# )
 # 
-# # saveRDS(sim20,file="~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Analysis/sim20.rds")
+# out_dir = "Analysis/Simulation Results/Temp3/"
+# in_dir = "Analysis/Simulation Results/Temp2/"
 # 
-# ds <- sim20[["ds"]]
-# re_all <- sim20[["re_all"]]
-# re_mmse <- sim20[["re_mmse"]]
-# re_tics <- sim20[["re_tics"]]
-# re_hcap <- sim20[["re_hcap"]]
-# 
-# # iteration 1 chosen arbitrarily
-# summary(lm(slope_sim ~ slope_true,data = re_mmse[[1]]))
-# summary(lm(slope_sim ~ slope_true,data = re_tics[[1]]))
-# summary(lm(slope_sim ~ slope_true,data = re_hcap[[1]]))
-# summary(lm(slope_sim ~ slope_true,data = re_all[[1]]))
-# 
-# # iteration 2 chosen arbitrarily
-# ggplot(data=re_all[[2]],aes(slope_true,slope_sim)) + geom_point() +
-#     geom_smooth()
-# ggplot(data=re_mmse[[2]],aes(slope_true,slope_sim)) + geom_point() +
-#     geom_smooth()
-# ggplot(data=re_tics[[2]],aes(slope_true,slope_sim)) + geom_point() +
-#     geom_smooth()
-# ggplot(data=re_hcap[[2]],aes(slope_true,slope_sim)) + geom_point() +
-#     geom_smooth()
-# 
-# # merge re_ datasets across iterations
-# re_all_summ <- bind_rows(re_all)
-# re_mmse_summ <- bind_rows(re_mmse)
-# re_tics_summ <- bind_rows(re_tics)
-# re_hcap_summ <- bind_rows(re_hcap)
-# ggplot(data=re_all_summ,aes(slope_true,slope_sim)) + geom_point() + geom_smooth()
-# ggplot(data=re_mmse_summ,aes(slope_true,slope_sim)) + geom_point() + geom_smooth()
-# ggplot(data=re_tics_summ,aes(slope_true,slope_sim)) + geom_point() + geom_smooth()
-# ggplot(data=re_hcap_summ,aes(slope_true,slope_sim)) + geom_point() + geom_smooth()
-# 
-# df <- readRDS(paste0(out_dir,"ds_iteration_group_2.rds"))[[1]]
-# plot(df$true_cog,df$sim_cog_mmse)
-# plot(df$true_cog,df$sim_cog_tics)
-# plot(df$true_cog,df$sim_cog_hcap)
-# plot(df$true_cog,df$sim_cog_all)
-# summary(lm(sim_cog_all ~ true_cog, data = df))
-# summary(df[,c("true_cog","sim_cog_all","sim_cog_mmse","sim_cog_tics","sim_cog_hcap")])
-# mod <- mirt(df[,hcap_nmsr], mirt_hcap)
-# df$sim_cog <- fscores(mod)
-# df$age <- true_sim$age
+# frml <- "true_cog ~ time + agebl_75 + slope_true_qrtl +
+#             time:agebl_75 + time:slope_true_qrtl + (1 + time | id)"
 # 
 # 
-# set.seed(08222024)
-# rids <- sample(unique(df$id),size = 100, replace = FALSE)
-# df5 <- df %>%  filter(id %in% rids)
+# simulateTrajectories(iter_group=3,niter=3,item_labels=item_labels,
+#                      true_sim=NULL,a_par=NULL,d_par=NULL,
+#                      models=models,dv_labels=dv_labels,items=items,
+#                      in_dir=in_dir,out_dir=out_dir,frml=frml)
+
+
+# # code to use simulateBlended Trajectories() to created blended cognitive measures
+# #   from previously created simulated datasets
+# #   and run mixed effects longitudinal models in which mirt estimated factor scores 
+# #   for each of the blended cognitive measures are dependent variables.
+# #   Note that in_dir is the folder with the previously created simulated datasets
 # 
-# # vm_pred - mean of 4000 simulations
-# ggplot(df5, aes(x = age, y = sim_cog)) + 
-#     geom_line(aes(group=id, color=id), show.legend = FALSE) + 
-#     geom_smooth(linetype=1,linewidth=1.5,show.legend = FALSE)  +
-#     # scale_x_continuous(name = "Time from Baseline (Years)", limits = c(0,10)) + 
-#     scale_x_continuous(name = "Age (Years)", limits = c(60,100)) + 
-#     scale_y_continuous(name = "Cognitive Score",limits=c(-3,3))
-#   
+# blend_labels <- c(
+#     c("tics3-tics13"),
+#     c("tics3-tics3"),
+#     c("tics10-tics13"),
+#     c("tics10-tics10"),
+#     c("tics13-tics16"),
+#     c("tics13-tics13"),
+#     c("tics3-tics16"),
+#     c("tics16-tics16")
+# )
+# 
+# blend_time <- 5
+# 
+# in_dir = "Analysis/Simulation Results/Temp2/"
+# out_dir = "Analysis/Simulation Results/Temp4/"
+# 
+# frml <- "true_cog ~ time + agebl_75 + slope_true_qrtl +
+#     time:agebl_75 + time:slope_true_qrtl + (1 + time | id)"
+# 
+# 
+# simulateBlendedTrajectories(niter=3,iter_group=3,blend_labels = blend_labels,
+#     blend_time = blend_time,in_dir=in_dir,out_dir=out_dir,frml=frml)
+
+# #   code to merge model predicted outcomes from lists of simulated datasets 
+# #       generated by simulateTrajectories() and simulateBlendedTrajectories().
+# 
+# dat_cols <- c("id","time","agebl_75","slope_true_qrtl","int_true_qrtl")
+# res_cols <- c("cog_true_pred_tics3-tics13","cog_sim_pred_tics3-tics13",
+#               "cog_sim_pred_tics3-tics3","cog_sim_pred_tics10-tics13",
+#               "cog_sim_pred_tics10-tics10","cog_sim_pred_tics13-tics16",
+#               "cog_sim_pred_tics13-tics13","cog_sim_pred_tics3-tics16",
+#               "cog_sim_pred_tics16-tics16")
+# out_dir <- "Analysis/Simulation Results/Temp4/"
+# 
+# r1 <- mergeSimResults(file_name = "ds_iteration_group_1.rds", out_dir = out_dir, 
+#                       dat_cols = dat_cols, res_cols = res_cols, iter_group = 3, niter = 3)
+# saveRDS(r1,file=paste0(out_dir,"model_predicted_trajectory_simulations.rds"))
+# 
+# r1 <- readRDS(paste0(out_dir,"model_predicted_trajectory_simulations.rds"))
+# 
+# rm(r1)
+
+
 
 #   ----------------------------- End Run/Test ---------------------------------
 
