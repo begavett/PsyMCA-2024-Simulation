@@ -793,15 +793,6 @@ sim_dif_detection <- function(iter,
            sim = iter)
   
   # YW: Association estimates
-  sem_cog_dep_cont <- sem(c(cfa_1f, "cog ~ depression"),
-                          data = samp_data_recoded, estimator = "mlr",
-                          group = "group", std.lv = TRUE,
-                          group.equal = c("loadings", "intercepts"))
-  summary(sem_cog_dep_cont)$pe %>%
-    filter(lhs == "cog" & rhs == "depression") %>%
-    mutate(type = "cn") %>%
-    select(type, group, est, se, z, pvalue)
-  
   for (suffix in c(suffixes, "cn")){
     if (suffix != "cn"){
       samp_data_forsem <- samp_data_recoded %>%
