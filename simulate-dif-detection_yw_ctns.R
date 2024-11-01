@@ -1037,6 +1037,5 @@ bias_CI_tib_forplot %>%
   geom_line(aes(group = rev(group), color = group), alpha = 0.75) + 
   geom_point(alpha = 0.75) + 
   theme_bw() + 
-  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
   ylab("RMSE") + xlab("") 
 
