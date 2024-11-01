@@ -846,7 +846,7 @@ log_file <- "sim_dif_log.txt"
 test1 <- sim_dif_detection(iter = 31)
 
 iter_start <- 1
-nsims <- 4
+nsims <- 10
 iter_end <- iter_start + nsims - 1
 
 # test2 <- Map(sim_dif_detection, iter = iter_start:iter_end)
@@ -983,13 +983,60 @@ reg_res2_long <- reg_res2 %>%
                names_to = c(".value", "group"), 
                names_pattern = "(.*)_g(.)") %>%
   mutate(bias = est + 0.3,
-         RMSE = sqrt(bias^2 + se^2)) %>%
+         RMSE = sqrt(bias^2 + se^2),
+         group = case_when(group == 1 ~ "Reference",
+                           group == 2 ~ "Focal"),
+         type = case_when(type == "km" ~ "kmeans",
+                          type == "ei" ~ "equal interval",
+                          type == "ef" ~ "equal frequency",
+                          type == "cn" ~ "continuous")) %>%
+  select(-z, -pvalue, -se) %>%
+  rename(coef = est)
+
+comp_grp_length <- with(reg_res2_long, length(levels(interaction(type, group))))
+
+mean_bias <- reg_res2_long %>%
   group_by(type, group) %>%
-  mutate(mean_bias = mean(bias),
-         mean_RMSE = mean(RMSE))
-
-reg_res2_long %>%
-  select(type, group, mean_bias, mean_RMSE) %>%
+  mutate(estimate = "mean",
+         across(c("coef", "bias", "RMSE"), \(x) mean(x, na.rm = TRUE))) %>%
+  select(type, group, estimate, coef, bias, RMSE) %>%
   unique()
+CI_bias <- reg_res2_long %>%
+  group_by(type, group) %>%
+  reframe(across(c("coef", "bias", "RMSE"), ~quantile(.x, c(0.025, 0.975)))) %>%
+  mutate(estimate = rep(c("p2.5th", "p97.5th"), comp_grp_length)) %>%
+  select(type, group, estimate, coef, bias, RMSE)
+bias_CI_tib <- bind_rows(mean_bias, CI_bias) %>%
+  mutate(group = as.factor(group))
 
+bias_CI_tib_forplot <- bias_CI_tib %>%
+  pivot_wider(names_from = estimate, values_from = c(coef, bias, RMSE))
+
+##---- Coef figure ----
+bias_CI_tib_forplot %>%
+  ggplot(aes(x = coef_mean, y = type, group = rev(group), color = group)) +
+  geom_point(position = position_dodge((width = 0.3))) +
+  geom_errorbarh(aes(xmin = coef_p2.5th, xmax = coef_p97.5th), height = 0.1, 
+                 position = position_dodge((width = 0.3))) +
+  geom_vline(xintercept = -0.3, linetype = "dashed", color = "black") +
+  theme_bw() +
+  xlab(expression(beta)) + 
+  theme(axis.title.y = element_blank())
+
+##---- bias & RMSE figure ----
+bias_CI_tib_forplot %>%
+  ggplot(aes(x = type, y = bias_mean, color = group)) +
+  geom_line(aes(group = rev(group), color = group), alpha = 0.75) + 
+  geom_point(alpha = 0.75) + 
+  theme_bw() + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  ylab("Bias") + xlab("") 
+
+bias_CI_tib_forplot %>%
+  ggplot(aes(x = type, y = RMSE_mean, color = group)) +
+  geom_line(aes(group = rev(group), color = group), alpha = 0.75) + 
+  geom_point(alpha = 0.75) + 
+  theme_bw() + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  ylab("RMSE") + xlab("") 
 
