@@ -2,7 +2,7 @@ library(pacman)
 p_load(dplyr, magrittr, ggplot2, psych, data.table, tidyr, janitor, hablar,
        mirt, faux, Hmisc, arules, discretization, synthpop, lavaan, stringr, 
        sqldf, semTools, sjmisc, future.apply, readr, progressr, semhelpinghands,
-       furrr, filelock)
+       furrr, filelock, cowplot, patchwork, lordif)
 
 write_to_log <- function(iteration, log_file) {
   lock <- filelock::lock(log_file)
@@ -10,11 +10,14 @@ write_to_log <- function(iteration, log_file) {
   filelock::unlock(lock)
 }
 
+
 #---- Load and preprocess the data ----
 # Use the dialog box to open ~/Dropbox/Projects/PsyMCA-2024-Simulation/data/HCAP_harmonized_data_PsyMCA-v6.rdata
 #load(file.choose())
 
 load("~/Dropbox/PsyMCA2024_Data_Sharing_HCAP/HCAP_harmonized_data_PsyMCA-v6.rdata")
+# YW's directory
+# load("~/Library/CloudStorage/Dropbox/PsyMCA2024_Data_Sharing_HCAP/HCAP_harmonized_data_PsyMCA-v6.rdata")
 
 original_data <- `HCAP_harmonized_data_PsyMCA-v6`
 
@@ -143,15 +146,16 @@ sk %>%
 
 # Population Parameters ---------------------------------------------------
 
-
+# #Cognitive Parameters ---------------------------------------------------
 # Establish the population
 # Mu & Sigma of reference group is 0(1)
 # Mu & Sigma of focal group is from HAALSI memory factor
 
 mu_haalsi <- hrs_haalsi_cog %>%
   filter(study == 5) %>%
-  select(fmem, cerad_imm_cont, cerad_del_cont, cerad_recog_cont, cerad_cpd_cont, 
-         lmi_cont, lmd_cont, lm_recog_cont, hyper, depression) %>%
+  select(fmem, cerad_imm_cont, cerad_del_cont, cerad_recog_cont, cerad_cpd_cont,
+         lmi_cont, lmd_cont, lm_recog_cont, age, female, less_edu, # YW: added age, gender, education
+         hyper, depression) %>%
   colMeans(na.rm = TRUE)
 
 mu_haalsi["fmem"] <- mu_haalsi["fmem"] - {
@@ -163,8 +167,9 @@ mu_haalsi["fmem"] <- mu_haalsi["fmem"] - {
 
 sd_haalsi <- hrs_haalsi_cog %>%
   filter(study == 5) %>%
-  select(fmem, cerad_imm_cont, cerad_del_cont, cerad_recog_cont, cerad_cpd_cont, 
-         lmi_cont, lmd_cont, lm_recog_cont, hyper, depression) %>%
+  select(fmem, cerad_imm_cont, cerad_del_cont, cerad_recog_cont, cerad_cpd_cont,
+         lmi_cont, lmd_cont, lm_recog_cont, age, female, less_edu, # YW: added age, gender, education
+         hyper, depression) %>%
   apply(., 2, sd, na.rm = TRUE)
 
 sd_haalsi["fmem"] <- sd_haalsi["fmem"] / {
@@ -174,9 +179,36 @@ sd_haalsi["fmem"] <- sd_haalsi["fmem"] / {
     sd_()
 }
 
+# YW: added other covariates
+## Parameters ---------------------------------------------------
+# Establish the population
+
+# standardize the fmem score for HRS: mean = 0, sd = 1
+# rescale the fmem score for HAALSI: mean = 0.75, sd = 0.9
+hrs_cog <- hrs_haalsi_cog %>%
+  filter(study == 1) %>%
+  mutate(fmem_stdz = (fmem - mean(fmem, na.rm = TRUE)) / sd(fmem, na.rm = TRUE))
+
+haalsi_cog <- hrs_haalsi_cog %>%
+  filter(study == 5) %>%
+  mutate(fmem_rscl = rescale(fmem, mean = -0.9, sd = 0.75) %>% unlist)
+
+# # Sanity check
+# mean(hrs_cog$fmem_stdz, na.rm = T); sd(hrs_cog$fmem_stdz, na.rm = T)
+# mean(haalsi_cog$fmem_rscl, na.rm = T); sd(haalsi_cog$fmem_rscl, na.rm = T)
+
+# Linear model to obtain effect size for depression on fmem
+fit_haalsi <- lm(fmem_rscl ~ age + female + less_edu + depression,
+                 data = haalsi_cog)
+summary(fit_haalsi) # -0.20
+
+fit_hrs <- lm(fmem_stdz ~ age + female + less_edu + depression,
+              data = hrs_cog)
+summary(fit_hrs) # -0.36
+
+# 10.25: setting the population level effect of depression on cognition at -0.3
 
 ## Test and population characteristics -------------------------------------
-
 n_items <- 10
 max_categories <- 10
 min_cell <- 50
@@ -189,38 +221,23 @@ loadings <- rnorm(n = n_items) %>%
   round(3)
 set.seed(245)
 skew_kurt <- MASS::mvrnorm(10, mu = colMeans(sk), Sigma = data.matrix(sk %>% cov())) %>%
-  data.frame()
-
-
-# Specify population model in reference group
-population_model_rg <- paste0('cog =~ ', paste0(paste0(loadings, "*x", 1:n_items), collapse = " + "), 
-                              "\n cog ~0*1
-                              \n cog ~~ 1*cog")
-
-cat(population_model_rg)
+  data.frame() %>%
+  #YW: Add skew and kurt default values for 4 additional predictor/covariate
+  #10.18.2024: changed to 1 predictor
+  rbind(data.frame(skew = rep(0, 1), kurtosis = rep(0, 1)))
 
 # Specify population model in focal group
 population_model_fg <- paste0('cog =~ ', paste0(paste0(loadings, "*x", 1:n_items), collapse = " + "), 
-                              "\n cog ~-.90*1
-                              \n cog ~~ 0.75*cog")
-
+                              "\n cog ~ -0.30 * depression
+                              \n cog ~-.90*1 
+                              cog ~~ 0.75*cog
+                              ")
 cat(population_model_fg)
-
-# Simulate population data for the reference group
-pop_data_rg <- simulateData(model = population_model_rg, 
-                            sample.nobs = pop_n_sim_RG,
-                            model.type = "cfa",
-                            estimator = "mlr", 
-                            skewness = skew_kurt$skew,
-                            kurtosis = skew_kurt$kurtosis,
-                            seed = 48291) %>%
-  mutate(group = "Reference") %>%
-  as.data.table()
 
 # Simulate population data for the focal group
 pop_data_fg <- simulateData(model = population_model_fg, 
                             sample.nobs = pop_n_sim_FG,
-                            model.type = "cfa",
+                            model.type = "sem",
                             estimator = "mlr",
                             skewness = skew_kurt$skew,
                             kurtosis = skew_kurt$kurtosis,
@@ -228,6 +245,24 @@ pop_data_fg <- simulateData(model = population_model_fg,
   mutate(group = "Focal") %>%
   as.data.table()
 
+# Specify population model in reference group
+population_model_rg <- paste0('cog =~ ', paste0(paste0(loadings, "*x", 1:n_items), collapse = " + "), 
+                              "\n cog ~ -0.30 * depression
+                              \n cog ~0*1
+                              \n cog ~~ 1*cog")
+
+cat(population_model_rg)
+
+# Simulate population data for the reference group
+pop_data_rg <- simulateData(model = population_model_rg,
+                            sample.nobs = pop_n_sim_RG,
+                            model.type = "sem",
+                            estimator = "mlr",
+                            skewness = skew_kurt$skew, 
+                            kurtosis = skew_kurt$kurtosis,
+                            seed = 48291) %>%
+  mutate(group = "Reference") %>%
+  as.data.table()
 
 pop_data_all <- rbind(pop_data_rg, pop_data_fg)
 rm(pop_data_rg, pop_data_fg)
@@ -253,6 +288,17 @@ cfa(cfa_1f, data = pop_data_all, estimator = "mlr", group = "group",
     std.lv = TRUE,
     group.equal = c("loadings", "intercepts")) %>%
   summary(fit.measures = TRUE, standardized = TRUE)
+
+# YW: check sem coefficients for depression
+sem(c(cfa_1f, "cog ~ depression"),
+    data = pop_data_all, estimator = "mlr",
+    group = "group", std.lv = T,
+    group.equal = c("loadings", "intercepts")) %>%
+  summary(fit.measures = T, standardized = T)
+# Check distribution of depression
+pop_data_all %>%
+  group_by(group) %>%
+  dplyr::summarize(mean = mean(depression), by = "group")
 
 pop_data_npsy <- copy(pop_data_all)
 
@@ -285,9 +331,36 @@ pop_cfa_npsy <- cfa(cfa_1f, data = pop_data_npsy, estimator = "mlr", group = "gr
 
 summary(pop_cfa_npsy, fit.measures = TRUE, standardized = TRUE)
 
-pop_cfa_model <- partable(pop_cfa_npsy)
+# YW: SEM including depression
+pop_sem_npsy <- sem(c(cfa_1f, "cog ~ depression"),
+                    data = pop_data_npsy, estimator = "mlr",
+                    group = "group", std.lv = TRUE,
+                    group.equal = c("loadings", "intercepts"))
+summary(pop_sem_npsy, fit.measures = T, standardized = T)
 
+pop_sem_model <- partable(pop_sem_npsy)
 
+pop_data_sample_me <- simulateData(model = pop_sem_model, 
+                                   sample.nobs = c(2*pop_n_sim_RG, 2*pop_n_sim_FG),
+                                   model.type = "sem",
+                                   estimator = "mlr",
+                                   skewness = skew_kurt$skew,
+                                   kurtosis = skew_kurt$kurtosis,
+                                   seed = 334281) %>%
+  mutate(group = case_when(group == 1 ~ "Reference",
+                           group == 2 ~ "Focal"),
+         across(starts_with("x"), \(x) round(x, 0)))
+
+set.seed(444)
+pop_data_sample_me %>%
+  sample_n(10000) %>%
+  pivot_longer(cols = starts_with("x"),
+               names_to = "item",
+               values_to = "score") %>%
+  mutate(item = factor(item, levels = paste0("x", 1:max(parse_number(item))))) %>%
+  ggplot(aes(x = score, fill = group)) +
+  geom_histogram(position = "dodge", binwidth = 1) +
+  facet_wrap(~item, ncol = 5, scales = "free")
 
 # Recoding ----------------------------------------------------------------
 
@@ -459,7 +532,8 @@ mimic_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group
 
 mg_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", dif_alpha = .01) {
   
-  mg0_syntax <- paste0(config_model, "\n ", paste0("x", 1:(ncol(data) - 1), " ~ c(ig1.", 1:(ncol(data) - 1), ", ig1.", 1:(ncol(data) - 1), ")*1", collapse = "\n"))
+  # YW: changed from ncol - 1 to ncol - 2 to exclude the predictor in the syntax here
+  mg0_syntax <- paste0(config_model, "\n ", paste0("x", 1:(ncol(data) - 2), " ~ c(ig1.", 1:(ncol(data) - 2), ", ig1.", 1:(ncol(data) - 2), ")*1", collapse = "\n"))
   
   mg0_syntax <- gsub("=~ NA\\*", "=~ c(lg1.1, lg1.1)*", mg0_syntax)
   
@@ -487,7 +561,7 @@ mg_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", 
     #   slice(1) %>%
     #   pull(lhs)
     
-    modindices(ref)
+    # modindices(ref)
     
     assign(paste0("m", i, "ts"), lavTestScore(ref)$uni %>%
              data.frame() %>%
@@ -530,9 +604,10 @@ mg_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", 
     names(adj_factor_scores) <- c("adj_cog_fs", "group", "adj_cog_fs_se")
     cn_factor_scores <- bind_cols(unadj_factor_scores, adj_factor_scores %>% select(-group)) %>%
       mutate(fs_diff = unadj_cog_fs - adj_cog_fs,
-             pooled_se = sqrt(unadj_cog_fs_se * adj_cog_fs_se),
+             pooled_se = sqrt((unadj_cog_fs_se^2 + adj_cog_fs_se^2)/2),
+             pooled_sd = sqrt((sd_(unadj_cog_fs)^2 + sd_(adj_cog_fs)^2)/2),
              scaled_diff = fs_diff / pooled_se,
-             diff_gt_03 = abs(fs_diff) > 0.3,
+             diff_gt_03 = abs(fs_diff) > (0.3 * pooled_sd),
              diff_gt_1se = abs(scaled_diff) > 1)
     
     
@@ -541,12 +616,12 @@ mg_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", 
                        #                               ifelse(str_detect(get(paste0("m", i, "free")), " ~"), "Intercept", 
                        #                                      warning(paste0("syntax error found with", get(paste0("m", i, "free")))))),
                        p = round(get(paste0("pval", i + 1)), 4),
-                       salient_diff_pct_03 = sum_(cn_factor_scores$diff_gt_03) / length(cn_factor_scores$diff_gt_03),
-                       salient_diff_pct_1se = sum_(cn_factor_scores$diff_gt_1se) / length(cn_factor_scores$diff_gt_1se),
-                       salient_diff_pct_03_rg = sum_(cn_factor_scores$diff_gt_03[cn_factor_scores$group == "Reference"]) / length(cn_factor_scores$diff_gt_03[cn_factor_scores$group == "Reference"]),
-                       salient_diff_pct_1se_rg = sum_(cn_factor_scores$diff_gt_1se[cn_factor_scores$group == "Reference"]) / length(cn_factor_scores$diff_gt_1se[cn_factor_scores$group == "Reference"]),
-                       salient_diff_pct_03_fg = sum_(cn_factor_scores$diff_gt_03[cn_factor_scores$group == "Focal"]) / length(cn_factor_scores$diff_gt_03[cn_factor_scores$group == "Focal"]),
-                       salient_diff_pct_1se_fg = sum_(cn_factor_scores$diff_gt_1se[cn_factor_scores$group == "Focal"]) / length(cn_factor_scores$diff_gt_1se[cn_factor_scores$group == "Focal"]))
+                       salient_diff_prop_03 = sum_(cn_factor_scores$diff_gt_03) / length(cn_factor_scores$diff_gt_03),
+                       salient_diff_prop_1se = sum_(cn_factor_scores$diff_gt_1se) / length(cn_factor_scores$diff_gt_1se),
+                       salient_diff_prop_03_rg = sum_(cn_factor_scores$diff_gt_03[cn_factor_scores$group == "Reference"]) / length(cn_factor_scores$diff_gt_03[cn_factor_scores$group == "Reference"]),
+                       salient_diff_prop_1se_rg = sum_(cn_factor_scores$diff_gt_1se[cn_factor_scores$group == "Reference"]) / length(cn_factor_scores$diff_gt_1se[cn_factor_scores$group == "Reference"]),
+                       salient_diff_prop_03_fg = sum_(cn_factor_scores$diff_gt_03[cn_factor_scores$group == "Focal"]) / length(cn_factor_scores$diff_gt_03[cn_factor_scores$group == "Focal"]),
+                       salient_diff_prop_1se_fg = sum_(cn_factor_scores$diff_gt_1se[cn_factor_scores$group == "Focal"]) / length(cn_factor_scores$diff_gt_1se[cn_factor_scores$group == "Focal"]))
     
     
     
@@ -570,10 +645,13 @@ mg_dif <- function(config_model = cfa_1f, data = samp_data_npsy, grp = "group", 
 
 sim_dif_detection <- function(iter, 
                               suffixes = c("ef", "ei", "km"), 
+                              sk_ku = skew_kurt,
                               n_RG = 3496, 
                               n_FG = 631, 
                               model_syntax = cfa_1f, 
+                              regression_syntax = "cog ~ depression",
                               model_partable = pop_cfa_model, 
+                              pop_data = pop_data_sample_me,
                               recoding_scheme = all_recoding_schemes, 
                               min_cell = 10, 
                               dif_alpha = .01) {
@@ -583,21 +661,46 @@ sim_dif_detection <- function(iter,
   require(mirt)
   require(data.table)
   
-  cat(paste(iter, ". Simulating data \n\n"))
+  cat(paste0(iter, ". Simulating data \n\n"))
   
   # Sample from population
-  samp_data <- simulateData(model = model_partable, 
-                            sample.nobs = c(n_RG, n_FG),
-                            model.type = "cfa",
-                            estimator = "mlr",
-                            seed = iter) %>%
-    mutate(group = case_when(group == 1 ~ "Reference",
-                             group == 2 ~ "Focal"))
+  # samp_data <- simulateData(model = model_partable, 
+  #                           sample.nobs = c(n_RG, n_FG),
+  #                           model.type = "cfa",
+  #                           estimator = "mlr",
+  #                           skewness = sk_ku$skew,
+  #                           kurtosis = sk_ku$kurtosis,
+  #                           seed = iter) %>%
+  #   mutate(group = case_when(group == 1 ~ "Reference",
+  #                            group == 2 ~ "Focal"))
+  # 
+  # samp_data_npsy <- samp_data %>%
+  #   mutate(across(c(everything(), -group), \(x) round(x, 0)))
   
-  samp_data_npsy <- samp_data %>%
-    mutate(across(c(everything(), -group), \(x) round(x, 0)))
+  set.seed(iter)
+  samp_data_npsy_rg <- pop_data %>%
+    filter(group == "Reference") %>%
+    slice_sample(n = n_RG, replace = FALSE)
   
-  n_items <- ncol(samp_data_npsy) - 1
+  set.seed(iter)
+  samp_data_npsy_fg <- pop_data %>%
+    filter(group == "Focal") %>%
+    slice_sample(n = n_FG, replace = FALSE)
+  
+  samp_data_npsy <- bind_rows(samp_data_npsy_rg,
+                              samp_data_npsy_fg)
+  
+  rm(samp_data_npsy_rg, samp_data_npsy_fg)
+  
+  samp_data_npsy %>%
+    pivot_longer(cols = x1:x10,
+                 names_to = "item",
+                 values_to = "score") %>%
+    ggplot(aes(x = score, fill = group)) +
+    geom_histogram(position = "dodge") +
+    facet_wrap(~item, ncol = 5)
+  
+  n_items <- ncol(samp_data_npsy) - 2
   
   # cfa(model_syntax, data = samp_data_npsy, estimator = "mlr", group = "group",
   #     std.lv = TRUE,
@@ -630,16 +733,17 @@ sim_dif_detection <- function(iter,
                            is.na(p) ~ 0),
            type = "cn")
   
+  # YW: move this outside the for loop so that samp_data_recoded can have all 
+  # the recoded version of the items to run SEM outside the dif detection loop.
+  samp_data_recoded <- samp_data_npsy %>%
+    mutate(group = factor(group) %>%
+             relevel(ref = "Reference"))
   
   
   for(suffix in suffixes) {
-    
-    samp_data_recoded <- samp_data_npsy %>%
-      mutate(group = factor(group) %>%
-               relevel(ref = "Reference"))
-    
     # Recode
-    for(i in 1:(ncol(samp_data_npsy) - 1)) {
+    # YW: changed from ncol -1 to ncol - 2 to exclude the predictor here.
+    for(i in 1:(ncol(samp_data_npsy) - 2)) {
       
       # Apply recoding scheme
       samp_data_recoded[paste0("x", i, "_", suffix)] <- car::recode(samp_data_npsy[,paste0("x", i)], recodes = all_recoding_schemes %>%
@@ -671,65 +775,80 @@ sim_dif_detection <- function(iter,
     cat("DIF with MIRT - ", suffix, "\n\n")
     
     # DIF testing (constrained baseline model, iteratively remove anchor items)
-    dif_mod <- mirt::DIF(mg_mod, 
-                         which.par = coef(mg_mod, simplify = TRUE)$Reference$items %>% attr(., "dimnames") %>% purrr::pluck(2),
-                         items2test = paste0("x", 1:n_items, "_", suffix),
-                         scheme = "drop_sequential",
-                         seq_stat = dif_alpha,
-                         technical = list(NCYCLES = 50000),
-                         verbose = FALSE,
-                         max_run = n_items)
+    dif_mod <- tryCatch(
+      {
+        mirt::DIF(mg_mod, 
+                  which.par = coef(mg_mod, simplify = TRUE)$Reference$items %>% attr(., "dimnames") %>% purrr::pluck(2),
+                  items2test = paste0("x", 1:n_items, "_", suffix),
+                  scheme = "drop_sequential",
+                  seq_stat = dif_alpha,
+                  technical = list(NCYCLES = 50000),
+                  verbose = FALSE,
+                  max_run = n_items)
+      },
+      error = function(e) {
+        error_data <- samp_data_recoded %>%
+          select(x1:group, ends_with(suffix))
+        dir.create("tryCatch", showWarnings = FALSE)
+        data.table::fwrite(error_data, file = paste0("tryCatch/iter", iter, "_", suffix, "_data.csv"))
+        saveRDS(mg_mod, paste0("tryCatch/iter", iter, "_", suffix, "_mgmod.Rds"))
+        return(data.frame(converged = rep(FALSE, n_items), row.names = paste0(paste0("x", 1:n_items), "_", suffix)))
+      }
+    )
     
-    if(nrow(dif_mod) > 0) {
-      dif_mod_ret <- mirt::DIF(mg_mod, 
-                               which.par = coef(mg_mod, simplify = TRUE)$Reference$items %>% attr(., "dimnames") %>% purrr::pluck(2),
-                               items2test = paste0("x", 1:n_items, "_", suffix),
-                               scheme = "drop_sequential",
-                               seq_stat = dif_alpha,
-                               technical = list(NCYCLES = 50000),
-                               verbose = FALSE,
-                               max_run = n_items,
-                               return_seq_model = TRUE)
-      
-      assign(paste0(suffix, "_adj_factor_scores"), fscores(dif_mod_ret, full.scores.SE = TRUE) %>%
-               as_tibble() %>%
-               bind_cols(samp_data_recoded %>% select(group)) %>%
-               set_names(c("adj_cog_fs", "adj_cog_fs_se", "group")))
-      
-      assign(paste0(suffix, "_factor_scores"),  bind_cols(get(paste0(suffix, "_unadj_factor_scores")), get(paste0(suffix, "_adj_factor_scores")) %>% select(-group)) %>%
-               mutate(fs_diff = unadj_cog_fs - adj_cog_fs,
-                      pooled_se = sqrt(unadj_cog_fs_se * adj_cog_fs_se),
-                      scaled_diff = fs_diff / pooled_se,
-                      diff_gt_03 = abs(fs_diff) > 0.3,
-                      diff_gt_1se = abs(scaled_diff) > 1))
-      
-      assign(paste0("dif_results_", suffix), dif_mod %>%
-               mutate(candidate_item = rownames(.)) %>%
-               bind_rows(data.frame(candidate_item = paste0("x", 1:n_items, "_", suffix),
-                                    p = NA)) %>%
-               distinct(candidate_item, .keep_all = TRUE) %>%
-               mutate(DIF = case_when(p < dif_alpha ~ 1,
-                                      p >= dif_alpha ~ 0,
-                                      is.na(p) ~ 0),
-                      type = suffix, 
-                      salient_diff_pct_03 = sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_03) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_03),
-                      salient_diff_pct_1se = sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_1se) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_1se),
-                      salient_diff_pct_03_rg = sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_03[get(paste0(suffix, "_factor_scores"))$group == "Reference"]) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_03[get(paste0(suffix, "_factor_scores"))$group == "Reference"]),
-                      salient_diff_pct_1se_rg = sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_1se[get(paste0(suffix, "_factor_scores"))$group == "Reference"]) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_1se[get(paste0(suffix, "_factor_scores"))$group == "Reference"]),
-                      salient_diff_pct_03_fg = sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_03[get(paste0(suffix, "_factor_scores"))$group == "Focal"]) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_03[get(paste0(suffix, "_factor_scores"))$group == "Focal"]),
-                      salient_diff_pct_1se_fg = sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_1se[get(paste0(suffix, "_factor_scores"))$group == "Focal"]) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_1se[get(paste0(suffix, "_factor_scores"))$group == "Focal"])))
-    } else {
-      
-      assign(paste0("dif_results_", suffix), dif_mod %>%
-               mutate(candidate_item = rownames(.)) %>%
-               bind_rows(data.frame(candidate_item = paste0("x", 1:n_items, "_", suffix),
-                                    p = NA)) %>%
-               distinct(candidate_item, .keep_all = TRUE) %>%
-               mutate(DIF = case_when(p < dif_alpha ~ 1,
-                                      p >= dif_alpha ~ 0,
-                                      is.na(p) ~ 0),
-                      type = suffix))
-    }
+    if(nrow(dif_mod) > 0 & ifelse(nrow(dif_mod) > 0, any(dif_mod$converged), FALSE)) {
+        dif_mod_ret <- mirt::DIF(mg_mod, 
+                                 which.par = coef(mg_mod, simplify = TRUE)$Reference$items %>% attr(., "dimnames") %>% purrr::pluck(2),
+                                 items2test = paste0("x", 1:n_items, "_", suffix),
+                                 scheme = "drop_sequential",
+                                 seq_stat = dif_alpha,
+                                 technical = list(NCYCLES = 50000),
+                                 verbose = FALSE,
+                                 max_run = n_items,
+                                 return_seq_model = TRUE)
+        
+        assign(paste0(suffix, "_adj_factor_scores"), fscores(dif_mod_ret, full.scores.SE = TRUE) %>%
+                 as_tibble() %>%
+                 bind_cols(samp_data_recoded %>% select(group)) %>%
+                 set_names(c("adj_cog_fs", "adj_cog_fs_se", "group")))
+        
+        assign(paste0(suffix, "_factor_scores"),  bind_cols(get(paste0(suffix, "_unadj_factor_scores")), get(paste0(suffix, "_adj_factor_scores")) %>% select(-group)) %>%
+                 mutate(fs_diff = unadj_cog_fs - adj_cog_fs,
+                        pooled_se = sqrt((unadj_cog_fs_se^2 + adj_cog_fs_se^2)/2),
+                        pooled_sd = sqrt((sd_(unadj_cog_fs)^2 + sd_(adj_cog_fs)^2)/2),
+                        scaled_diff = fs_diff / pooled_se,
+                        diff_gt_03 = abs(fs_diff) > (0.3 * pooled_sd),
+                        diff_gt_1se = abs(scaled_diff) > 1))
+        
+        assign(paste0("dif_results_", suffix), dif_mod %>%
+                 mutate(candidate_item = rownames(.)) %>%
+                 bind_rows(data.frame(candidate_item = paste0("x", 1:n_items, "_", suffix),
+                                      p = NA)) %>%
+                 distinct(candidate_item, .keep_all = TRUE) %>%
+                 mutate(DIF = case_when(p < dif_alpha ~ 1,
+                                        p >= dif_alpha ~ 0,
+                                        is.na(p) ~ 0),
+                        type = suffix, 
+                        salient_diff_prop_03 = ifelse(DIF == 0, sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_03) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_03), NA),
+                        salient_diff_prop_1se = ifelse(DIF == 0, sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_1se) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_1se), NA),
+                        salient_diff_prop_03_rg = ifelse(DIF == 0, sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_03[get(paste0(suffix, "_factor_scores"))$group == "Reference"]) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_03[get(paste0(suffix, "_factor_scores"))$group == "Reference"]), NA),
+                        salient_diff_prop_1se_rg = ifelse(DIF == 0, sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_1se[get(paste0(suffix, "_factor_scores"))$group == "Reference"]) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_1se[get(paste0(suffix, "_factor_scores"))$group == "Reference"]), NA),
+                        salient_diff_prop_03_fg = ifelse(DIF == 0, sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_03[get(paste0(suffix, "_factor_scores"))$group == "Focal"]) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_03[get(paste0(suffix, "_factor_scores"))$group == "Focal"]), NA),
+                        salient_diff_prop_1se_fg = ifelse(DIF == 0, sum_(get(paste0(suffix, "_factor_scores"))$diff_gt_1se[get(paste0(suffix, "_factor_scores"))$group == "Focal"]) / length(get(paste0(suffix, "_factor_scores"))$diff_gt_1se[get(paste0(suffix, "_factor_scores"))$group == "Focal"]), NA)))
+      } else {
+        
+        assign(paste0("dif_results_", suffix), dif_mod %>%
+                 mutate(candidate_item = rownames(.)) %>%
+                 bind_rows(data.frame(candidate_item = paste0("x", 1:n_items, "_", suffix),
+                                      p = NA,
+                                      converged = NA)) %>%
+                 distinct(candidate_item, .keep_all = TRUE) %>%
+                 mutate(DIF = case_when(p < dif_alpha ~ 1,
+                                        p >= dif_alpha ~ 0,
+                                        is.na(p) & converged ~ 0,
+                                        is.na(p) & !converged ~ NA),
+                        type = suffix))
+      }
   }
   
   dif_results <- rbindlist(mget(paste0("dif_results_", suffixes)), fill = TRUE) %>%
@@ -737,6 +856,38 @@ sim_dif_detection <- function(iter,
     mutate(candidate_item = str_split_i(candidate_item, "_", 1),
            sim = iter)
   
+  # YW: Association estimates
+  for (suffix in c(suffixes, "cn")){
+    if (suffix != "cn"){
+      samp_data_forsem <- samp_data_recoded %>%
+        select(-paste0("x", 1:n_items)) %>%
+        rename_with(~str_replace(., paste0("_", suffix), ""))
+    } else if (suffix == "cn"){
+      samp_data_forsem <- samp_data_recoded
+    }
+    sem_cog_dep <- sem(c(cfa_1f, "cog ~ depression"),
+                       data = samp_data_forsem, estimator = "mlr",
+                       group = "group", std.lv = TRUE,
+                       group.equal = c("loadings", "intercepts"))
+    reg_results <- summary(sem_cog_dep)$pe %>%
+      filter(lhs == "cog" & rhs == "depression") %>%
+      mutate(type = suffix) %>%
+      select(type, group, est, se, z, pvalue)
+    assign(paste0("reg_results_", suffix), reg_results)
+  }
+  
+  reg_results <- rbindlist(mget(paste0("reg_results_", c(suffixes, "cn"))), 
+                           fill = TRUE) %>%
+    pivot_wider(names_from = group, values_from = c(est, se, z, pvalue),
+                names_sep = "_g")
+  
+  # Merge the reg_results onto the dif_results to save work for Brandon's 
+  # parallel workflow
+  dif_results <- dif_results %>%
+    left_join(reg_results, by = "type")
+  
+  dir.create("Output/iterations", showWarnings = FALSE)
+  saveRDS(dif_results, paste0("Output/iterations/dif_results_", sprintf("%04d", iter), ".Rds"))
   
   write_to_log(iter, log_file)
   
@@ -750,16 +901,16 @@ sim_dif_detection <- function(iter,
 
 log_file <- "sim_dif_log.txt"
 
-test1 <- sim_dif_detection(iter = 31)
+test1 <- sim_dif_detection(iter = 14)
 
 iter_start <- 1
-nsims <- 20
+nsims <- 2000
 iter_end <- iter_start + nsims - 1
 
 test2 <- Map(sim_dif_detection, iter = iter_start:iter_end)
 
 
-plan(multisession, workers = 4)
+plan(multisession, workers = 20)
 
 # Enable progress reporting
 handlers(global = TRUE)
@@ -783,12 +934,46 @@ plan(sequential)
 # Compile Results ---------------------------------------------------------
 
 
-
 res2 <- test2 %>% 
-  rbindlist(fill = TRUE)
+  rbindlist(fill = TRUE) %>%
+  mutate(converged = ifelse(is.na(converged), TRUE, converged),
+         failed = !converged)
+
 #rm(test2)
 #saveRDS(res2, "Output/res2.Rds")
 #res2 <- readRDS("Output/res2.Rds")
+
+res_summary_bytype <- res2 %>%
+  group_by(type, sim) %>%
+  mutate(anyDIF = ifelse(any(DIF == 1), 1, 0),
+         anyFailed = ifelse(any(failed), 1, 0)) %>%
+  ungroup() %>%
+  distinct(type, sim, .keep_all = TRUE) %>%
+  group_by(type) %>%
+  summarise(failed = sum_(anyFailed == 1),
+            sims = n() - sum_(failed),
+            sims_w_DIF = sum_(anyDIF == 1),
+            DIF_prop = sims_w_DIF / sims,
+            DIF_prop_se = sqrt((DIF_prop * (1-DIF_prop))/sims),
+            DIF_pct = DIF_prop*100,
+            DIF_pct_lo = DIF_pct - 100*DIF_prop_se,
+            DIF_pct_hi = DIF_pct + 100*DIF_prop_se,
+            .groups = "drop")
+
+res_summary_byitem <- res2 %>%
+  group_by(candidate_item, type) %>%
+  summarise(sims = length(unique(res2$sim)) - sum_(failed),
+            DIF_n = sum_(DIF),
+            .groups = "drop") %>%
+  mutate(DIF_pct = round(100*DIF_n/sims, 3),
+         DIF_pct_se = sqrt((DIF_pct/100 * (1-DIF_pct/100))/sims),
+         DIF_pct_lo = DIF_pct - 100*DIF_pct_se,
+         DIF_pct_hi = DIF_pct + 100*DIF_pct_se,
+         candidate_item = factor(candidate_item, levels = paste0("x", 1:max(parse_number(candidate_item)))),
+         Type = factor(type, levels = c("cn", "ef", "ei", "km"),
+                       labels = c("Continuous", "Equal Frequency",
+                                  "Equal Interval", "K-Means")))
+
 
 res2
 
@@ -797,13 +982,13 @@ res2 %>%
 
 res2 %>%
   group_by(candidate_item, type) %>%
-  summarise(sims = length(DIF),
-            DIF_n = sum(DIF),
+  summarise(sims = length(unique(res2$sim)) - sum_(failed),
+            DIF_n = sum_(DIF),
             .groups = "drop") %>%
   mutate(DIF_pct = round(100*DIF_n/sims, 3)) %>%
-  pivot_wider(id_cols = c(candidate_item, sims), 
+  pivot_wider(id_cols = candidate_item, 
               names_from = type,
-              values_from = c(DIF_n, DIF_pct)) %>%
+              values_from = c(sims, DIF_n, DIF_pct)) %>%
   mutate(EF_vs_cont = DIF_pct_ef - DIF_pct_cn,
          EI_vs_cont = DIF_pct_ei - DIF_pct_cn,
          KM_vs_cont = DIF_pct_km - DIF_pct_cn) %>%
@@ -811,17 +996,8 @@ res2 %>%
   data.frame() 
 
 
-res2 %>%
-  group_by(candidate_item, type) %>%
-  summarise(sims = length(DIF),
-            DIF_n = sum(DIF),
-            .groups = "drop") %>%
-  mutate(DIF_pct = round(100*DIF_n/sims, 3),
-         DIF_pct_se = sqrt((DIF_pct/100 * (1-DIF_pct/100))/sims),
-         DIF_pct_lo = DIF_pct - 100*DIF_pct_se,
-         DIF_pct_hi = DIF_pct + 100*DIF_pct_se,
-         candidate_item = factor(candidate_item, levels = paste0("x", 1:max(parse_number(candidate_item))))) %>%
-  ggplot(aes(x = type, y = DIF_pct, fill = type)) +
+p1 <- res_summary_byitem %>%
+  ggplot(aes(x = type, y = DIF_pct, fill = Type)) +
   geom_col() +
   geom_errorbar(aes(ymin = DIF_pct_lo, ymax = DIF_pct_hi)) +
   facet_wrap(~candidate_item, ncol = 5) +
@@ -829,24 +1005,62 @@ res2 %>%
   theme(axis.title.x = element_blank(),
         axis.text.x = element_blank(),
         axis.ticks.x = element_blank()) +
-  scale_fill_discrete(name = "Type") +
-  ylim(0, 100)
+  ylim(0, 185) +
+  theme_cowplot() +
+  scale_fill_brewer(palette = "Set1", name = "Type") +
+  xlab("Type")
 
+set.seed(789)
+p2a <- pop_data_all %>%
+  sample_n(10000) %>%
+  pivot_longer(cols = starts_with("x"),
+               names_to = "item",
+               values_to = "score") %>%
+  mutate(item = factor(item, levels = paste0("x", 1:max(parse_number(item))))) %>%
+  filter(item %in% paste0("x", 1:5)) %>%
+  ggplot(aes(x = score, fill = group)) +
+  geom_density(alpha = .5) +
+  facet_wrap(~item, ncol = 5) +
+  xlim(-5, 5) +
+  theme_cowplot() +
+  theme(strip.text = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank()) +
+  scale_fill_viridis_d(name = "Group", end = .8)
 
-res2 %>%
-  group_by(type, sim) %>%
-  mutate(anyDIF = ifelse(any(DIF == 1), 1, 0)) %>%
-  ungroup() %>%
-  distinct(type, sim, .keep_all = TRUE) %>%
-  group_by(type) %>%
-  summarise(sims = n(),
-            sims_w_DIF = sum(anyDIF == 1),
-            DIF_pct = sims_w_DIF / sims,
-            DIF_pct_se = sqrt((DIF_pct * (1-DIF_pct))/sims),
-            DIF_pct = DIF_pct*100,
-            DIF_pct_lo = DIF_pct - 100*DIF_pct_se,
-            DIF_pct_hi = DIF_pct + 100*DIF_pct_se,
-            .groups = "drop") %>%
+set.seed(789)
+p2b <- pop_data_all %>%
+  sample_n(10000) %>%
+  pivot_longer(cols = starts_with("x"),
+               names_to = "item",
+               values_to = "score") %>%
+  mutate(item = factor(item, levels = paste0("x", 1:max(parse_number(item))))) %>%
+  filter(item %in% paste0("x", 6:10)) %>%
+  ggplot(aes(x = score, fill = group)) +
+  geom_density(alpha = .5, show.legend = FALSE) +
+  facet_wrap(~item, ncol = 5) +
+  xlim(-5, 5) +
+  theme_cowplot() +
+  theme(strip.text = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank()) +
+  scale_fill_viridis_d(name = "Group", end = .8)
+
+p1 + inset_element(p2a, .043, .275, .965, .5, align_to = "full") + inset_element(p2b, .043, .775, .875, .95, align_to = "full")
+
+res_summary_bytype %>%
   ggplot(aes(x = type, y = DIF_pct, fill = type)) +
   geom_col() +
   geom_errorbar(aes(ymin = DIF_pct_lo, ymax = DIF_pct_hi)) +
@@ -858,18 +1072,146 @@ res2 %>%
   ylim(0, 100)
 
 
+
+res2 %>%
+  filter(salient_diff_prop_03 >= 0) %>%
+  mutate(salient_diff_pct_03 = 100*salient_diff_prop_03) %>%
+  group_by(type) %>%
+  summarise(mdn_sal_03 = quantile(salient_diff_pct_03, .5),
+            q025_sal_03 = quantile(salient_diff_pct_03, .025),
+            q975_sal_03 = quantile(salient_diff_pct_03, .975),
+            .groups = "drop") %>%
+  ggplot(aes(x = type, y = mdn_sal_03, colour = type)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = q025_sal_03, ymax = q975_sal_03)) +
+  ylab("Percentage of Simulated Cases with Salient DIF") +
+  theme_cowplot() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  scale_fill_discrete(name = "Type") 
+
+
+
+res2 %>%
+  filter(salient_diff_prop_1se >= 0) %>%
+  mutate(salient_diff_pct_1se = 100*salient_diff_prop_1se) %>%
+  group_by(type) %>%
+  summarise(mdn_sal_1se = quantile(salient_diff_prop_1se, .5),
+            q025_sal_1se = quantile(salient_diff_prop_1se, .025),
+            q975_sal_1se = quantile(salient_diff_prop_1se, .975),
+            .groups = "drop") %>%
+  ggplot(aes(x = type, y = mdn_sal_1se, colour = type)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = q025_sal_1se, ymax = q975_sal_1se)) +
+  ylab("Percentage of Simulated Cases with Salient DIF") +
+  theme_cowplot() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  scale_fill_discrete(name = "Type")
+
+
+
+
 res2 %>%
   group_by(type, sim) %>%
   mutate(anyDIF = ifelse(any(DIF == 1), 1, 0)) %>%
   ungroup() %>%
   distinct(type, sim, .keep_all = TRUE) %>%
   group_by(type) %>%
-  summarise(sims = n(),
-            sims_w_DIF = sum(anyDIF == 1),
+  summarise(sims = length(unique(res2$sim)) - sum_(failed),
+            sims_w_DIF = sum_(anyDIF == 1),
             .groups = "drop") %>%
   mutate(DIF_pct = round(100*sims_w_DIF/sims, 3))
+
+
+res2 %>% 
+  filter(DIF == 1,
+         salient_diff_prop_03 > 0)
+
+res2 %>% 
+  filter(DIF == 1,
+         salient_diff_prop_1se > 0)
+
 
 table(res2$candidate_item, res2$type, res2$DIF)
 
 table(res2$candidate_item, res2$type, res2$DIF) %>%
   proportions(margin = c(1, 2))
+
+#YW added regression bias calculation here
+#---- Regression bias ----
+# True effect 0.3
+# bias: estimate - true effect
+# RMSE = sqrt(bias^2 + variance(estimate))
+reg_res2 <- res2 %>%
+  select(sim, type, contains(c("g1", "g2"))) %>%
+  group_by(sim, type) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+reg_res2_long <- reg_res2 %>%
+  pivot_longer(cols = contains(c("g1", "g2")), 
+               names_to = c(".value", "group"), 
+               names_pattern = "(.*)_g(.)") %>%
+  mutate(bias = est + 0.3,
+         RMSE = sqrt(bias^2 + se^2),
+         group = case_when(group == 1 ~ "Reference",
+                           group == 2 ~ "Focal"),
+         type = case_when(type == "km" ~ "kmeans",
+                          type == "ei" ~ "equal interval",
+                          type == "ef" ~ "equal frequency",
+                          type == "cn" ~ "continuous")) %>%
+  select(-z, -pvalue, -se) %>%
+  rename(coef = est)
+
+comp_grp_length <- with(reg_res2_long, length(levels(interaction(type, group))))
+
+mean_bias <- reg_res2_long %>%
+  group_by(type, group) %>%
+  summarise(estimate = "mean",
+            across(c("coef", "bias", "RMSE"), \(x) mean(x, na.rm = TRUE)),
+            .groups = NULL) 
+
+CI_bias <- reg_res2_long %>%
+  group_by(type, group) %>%
+  reframe(across(c("coef", "bias", "RMSE"), ~quantile(.x, c(0.025, 0.975)))) %>%
+  mutate(estimate = rep(c("p2.5th", "p97.5th"), comp_grp_length)) %>%
+  select(type, group, estimate, coef, bias, RMSE)
+
+bias_CI_tib <- bind_rows(mean_bias, CI_bias) %>%
+  mutate(group = as.factor(group))
+
+bias_CI_tib_forplot <- bias_CI_tib %>%
+  pivot_wider(names_from = estimate, values_from = c(coef, bias, RMSE))
+
+##---- Coef figure ----
+bias_CI_tib_forplot %>%
+  ggplot(aes(x = coef_mean, y = type, group = rev(group), color = group)) +
+  geom_point(position = position_dodge((width = 0.3))) +
+  geom_errorbarh(aes(xmin = coef_p2.5th, xmax = coef_p97.5th), height = 0.1, 
+                 position = position_dodge((width = 0.3))) +
+  geom_vline(xintercept = -0.3, linetype = "dashed", color = "black") +
+  theme_bw() +
+  xlab(expression(beta)) + 
+  theme(axis.title.y = element_blank())
+
+##---- bias & RMSE figure ----
+bias_CI_tib_forplot %>%
+  ggplot(aes(x = type, y = bias_mean, color = group)) +
+  geom_line(aes(group = rev(group), color = group), alpha = 0.75) + 
+  geom_point(alpha = 0.75) + 
+  theme_bw() + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  ylab("Bias") + xlab("") +
+  ylim(-.3, .3)
+
+bias_CI_tib_forplot %>%
+  ggplot(aes(x = type, y = RMSE_mean, color = group)) +
+  geom_line(aes(group = rev(group), color = group), alpha = 0.75) + 
+  geom_point(alpha = 0.75) + 
+  theme_bw() + 
+  ylab("RMSE") + xlab("") +
+  ylim(0, .3)
+
