@@ -149,13 +149,13 @@ simTraj <- function(data = df, sim_cog_var = "sim_cog_all", frml = frml,
 #       item_labels - vector that contains variable names of superset of items that occur 
 #           in any of the simulated measures (union of items across simulated measures)
 #       * vectors with mirt design parameters (must have the same number of elements)
-#           models - vector, each element contains mirt model syntax for one simulated measure
-#               e.g. "dv1 = 1:5"
-#           dv_labels - vector, each element contains factor label for one simulated measure
-#               e.g. "dv1"
-#           items - vector, each element is a vector that contains item numbers
-#               (corresponding to item_labels) for one simulated measure 
-#               e.g. "c(1:3,4,7)"
+#       models - vector, each element contains mirt model syntax for one simulated measure
+#           e.g. "dv1 = 1:5"
+#       dv_labels - vector, each element contains factor label for one simulated measure
+#           e.g. "dv1"
+#       items - vector, each element is a vector that contains item numbers
+#           (corresponding to item_labels) for one simulated measure 
+#           e.g. "c(1:3,4,7)"
 #       in_dir - path to directory for input of previously generated simulated
 #           item response datasets. if is.null(in_dir) item responses will be simulated
 #           using true_sim, a_par, and d_par
@@ -207,16 +207,18 @@ simulateTrajectories <- function(iter_group = 5, niter = 20, item_labels,
     varnms <- paste0("sim_cog_",dv_labels)
     varnms_rs <- paste0(varnms,"_rs")
     for (itgrp in 1:iter_group) {
-        ds <- list()
+            ds <- list()
         for (i in 1:length(dv_labels)) {
             assign(paste0("re_",i),list())
             assign(paste0("fe_",i),list())
         }
 
         set.seed(092724)
-        for (iter in 1:niter) {
-            cat(paste0("Group - ",itgrp, ", Iteration - ",iter,"\n"))
-            
+        # for (iter in 1:niter) {
+        iter <- 1
+        while (iter <= niter) {
+            # cat(paste0("Group - ",itgrp, ", Iteration - ",iter,"\n"))
+
             # simulate item responses
             iteration <- ((itgrp - 1) * niter) + iter
             
@@ -232,6 +234,7 @@ simulateTrajectories <- function(iter_group = 5, niter = 20, item_labels,
                 df <- df %>% relocate(c(id,iteration,time,true_cog))
                 
                 # true random effect intercept and slope - from calculate_re_true.R 
+                # In Dropbox/PsyMCA2024_Sharing/WG4_Simulation/Longitudinal_Cognition_Simulation/Observed Cognition Longitudinal Simulation/Data/
                 true_re <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/true_random_effects.rds")
                 df <- df %>% left_join((true_re %>% dplyr::select(id,int_true_qrtl,
                         slope_true_qrtl)),by="id")
@@ -239,7 +242,7 @@ simulateTrajectories <- function(iter_group = 5, niter = 20, item_labels,
                 flag_low_response <- FALSE
                 for (itnm in item_labels) {
                     if (length(table(df[,itnm])) < 2) {
-                        flag_low_response <- TRUE
+                    flag_low_response <- TRUE
                     }
                 }
                 if (flag_low_response == TRUE) {
@@ -251,6 +254,7 @@ simulateTrajectories <- function(iter_group = 5, niter = 20, item_labels,
                 df <- df %>% dplyr::select(c(id:true_cog,agebl_75:slope_true_qrtl,any_of(item_labels)))
             }
             
+            cat(paste0("Group - ",itgrp, ", Iteration - ",iter,"\n"))
             for (i in 1:length(dv_labels)) {
                 assign(paste0("mirt_dv",i),models[i]) 
             }
@@ -344,7 +348,8 @@ simulateTrajectories <- function(iter_group = 5, niter = 20, item_labels,
             }
             
             ds[[paste0("iteration-",iteration)]] <- df
-            
+        
+            iter <- iter + 1    
             
         } # end for iter
         
@@ -420,6 +425,8 @@ simulateTrajectories <- function(iter_group = 5, niter = 20, item_labels,
 #       out_dir - path to directory for output of simulation results
 #       frml - formula specification for (lmer) longitudinal mixed effects model
 #           e.g. "true_cog ~ time + (1 + time | id)"
+#       item_labels - labels for items included in tests - union of all items
+#           used to output item level data that was used to create tests
 #
 #   Value - Saves lists of results to out_dir - there is a file for each iter_group 
 #       that contains a list with niter elements. There are also files that merge
@@ -453,7 +460,8 @@ simulateBlendedTrajectories <- function(niter = 20, iter_group = 5,
                     blend_time = blend_time,
                     in_dir = "Analysis/Simulation Results/",
                     out_dir = "Analysis/Simulation Results/",
-                    frml = "true_cog ~ time + (1 | id)") {
+                    frml = "true_cog ~ time + (1 | id)",
+                    item_labels = item_labels) {
     require(mirt)
     require(tidyverse)
     require(stringr)
@@ -478,9 +486,10 @@ simulateBlendedTrajectories <- function(niter = 20, iter_group = 5,
             
             #  load simulated item responses
             iteration <- ((itgrp - 1) * niter) + iter
-            df <- readRDS(paste0(in_dir,"ds_iteration_group_",itgrp,".rds"))[[iter]]
+            df <- data.frame(readRDS(paste0(in_dir,"ds_iteration_group_",itgrp,".rds"))[[iter]])
+            names(df) <- gsub(paste0("iteration.",iteration,"."),"",names(df))
             df <- df %>% dplyr::select(c(id:true_cog,agebl_75:slope_true_qrtl,any_of(item_labels),
-                                         ends_with("_rs")))
+                ends_with("_rs")))
             
             for (i in 1:length(design$dv_labels)) {
                 lbl <- paste0("sim_cog_",design$dv_labels[i],"_rs")
@@ -707,9 +716,11 @@ mergeSimResults <-function(file_name = "ds_iteration_group_1.rds",
 #             time:agebl_75 + time:slope_true_qrtl + (1 + time | id)"
 # 
 # # load simulated "true" cognition
+# # In Dropbox/PsyMCA2024_Sharing/WG4_Simulation/Longitudinal_Cognition_Simulation
 # true_sim <- readRDS("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Data/simulated_longitudinal_true_cognition.rds")
 # 
 # # load item parameters
+# # In Dropbox/PsyMCA2024_Sharing/WG4_Simulation/Longitudinal_Cognition_Simulation/Observed Cognition Longitudinal Simulation
 # load("~/Psychometrics Conference/2024/Simulation WG/PsyMCA-2024-Simulation/Analysis/co_calibration_results.Rdata")
 # 
 # a <- extractMIRTParm((res_md_1a))[[1]][12:21]
@@ -777,6 +788,7 @@ mergeSimResults <-function(file_name = "ds_iteration_group_1.rds",
 # 
 # blend_time <- 5
 # 
+# # in_dir contains previously simualted item level datasets indexed by iteration group (itgrp)
 # in_dir = "Analysis/Simulation Results/Temp2/"
 # out_dir = "Analysis/Simulation Results/Temp4/"
 # 
